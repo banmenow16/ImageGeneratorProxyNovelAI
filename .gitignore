@@ -21,9 +21,6 @@ dist/
 imagine_generator_proxy/cache/
 imagine_generator_proxy/pyvenv.cfg
 *.log
-start_server.bat
-start_server.ps1
-start_server.sh
 test.html
 
 # Virtualenv internals
