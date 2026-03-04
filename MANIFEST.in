@@ -1,0 +1,4 @@
+include README.md
+include LICENSE
+include imagine_generator_proxy/config.yaml
+recursive-include imagine_generator_proxy *.yaml *.yml
