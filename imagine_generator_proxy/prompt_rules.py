@@ -17,21 +17,26 @@ Rule schema:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 RULES_VERSION: int = 3
+
+# Bulky vocabularies live in rule_data.json (loaded here, loud failure if the
+# file is missing or malformed — same fail-closed philosophy as the rules).
+# Editing that file changes massaged prompts: bump RULES_VERSION alongside.
+_DATA_PATH = Path(__file__).parent / "rule_data.json"
+with _DATA_PATH.open("r", encoding="utf-8") as _f:
+	DATA = json.load(_f)
 
 # Large-chest size tags (kept verbatim — user preference). Vision QC found
 # these correlate with melted torso silhouettes and lost/untraceable arms;
 # the rule adds stability tags instead of touching the size tags.
-LARGE_CHEST_TAGS = [
-	"massive breasts", "huge breasts", "enormous breasts", "colossal breasts",
-	"gigantic breasts", "giant breasts", "hyper breasts", "big breasts",
-	"large breasts", "huge chest", "massive chest", "massive heavy breasts",
-	"enormous breasts exposed",
-]
+LARGE_CHEST_TAGS = DATA["large_chest_tags"]
 
 # Solo indicators: vision QC saw "solo" prompts gain background figures the
 # standard negative blocks don't suppress (they only cover "multiple girls").
-SOLO_TAGS = ["solo", "one girl", "one boy", "solo focus", "1girl", "1boy"]
+SOLO_TAGS = DATA["solo_tags"]
 
 LEGACY_QUALITY_PREFIX = "score_9, score_8_up, score_7_up, score_6_up, source_anime"
 V45_QUALITY_SUFFIX = "location, very aesthetic, masterpiece, no text"
@@ -41,14 +46,7 @@ V45_QUALITY_SUFFIX = "location, very aesthetic, masterpiece, no text"
 # character cards appending their negative block). Used by the run-detector:
 # a consecutive run of >= 3 of these tags is treated as a leaked negative
 # section and cut, together with any scene suppressions trailing it.
-NEGATIVE_VOCAB = [
-	"deformed", "ugly", "blurry", "lowres", "extra limbs", "mutated hands",
-	"poor anatomy", "bad lighting", "overexposed", "underexposed",
-	"worst quality", "low quality", "jpeg artifacts", "text", "watermark",
-	"signature", "logo", "duplicate", "duplicates", "extra fingers",
-	"emoji", "letters", "writing", "advertisement", "caption", "error",
-	"chat", "discord", "message", "unnatural proportions",
-]
+NEGATIVE_VOCAB = DATA["negative_vocab"]
 
 RULES = [
 	# --- stage: safety (runs first, always) ---
@@ -93,11 +91,7 @@ RULES = [
 		"notes": "cut trailing runs of >= 3 negative-vocabulary tags with no marker"},
 
 	{"id": "dedupe-quality-tags", "stage": "cleanup", "severity": "safe",
-		"match": {"type": "tags", "value": [
-			"score_9", "score_8_up", "score_7_up", "score_6_up", "score_5_up",
-			"source_anime", "best quality", "very aesthetic", "absurdres",
-			"masterpiece", "location", "no text", "amazing quality",
-		]},
+		"match": {"type": "tags", "value": DATA["dedupe_quality_tags"]},
 		"action": {"type": "dedupe"},
 		"notes": "collapse quality tags duplicated by caller + prefix"},
 

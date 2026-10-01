@@ -1,0 +1,24 @@
+{
+	"large_chest_tags": [
+		"massive breasts", "huge breasts", "enormous breasts", "colossal breasts",
+		"gigantic breasts", "giant breasts", "hyper breasts", "big breasts",
+		"large breasts", "huge chest", "massive chest", "massive heavy breasts",
+		"enormous breasts exposed"
+	],
+	"solo_tags": [
+		"solo", "one girl", "one boy", "solo focus", "1girl", "1boy"
+	],
+	"negative_vocab": [
+		"deformed", "ugly", "blurry", "lowres", "extra limbs", "mutated hands",
+		"poor anatomy", "bad lighting", "overexposed", "underexposed",
+		"worst quality", "low quality", "jpeg artifacts", "text", "watermark",
+		"signature", "logo", "duplicate", "duplicates", "extra fingers",
+		"emoji", "letters", "writing", "advertisement", "caption", "error",
+		"chat", "discord", "message", "unnatural proportions"
+	],
+	"dedupe_quality_tags": [
+		"score_9", "score_8_up", "score_7_up", "score_6_up", "score_5_up",
+		"source_anime", "best quality", "very aesthetic", "absurdres",
+		"masterpiece", "location", "no text", "amazing quality"
+	]
+}
