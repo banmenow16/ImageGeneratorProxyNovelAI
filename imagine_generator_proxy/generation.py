@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 from novelai_api.NovelAI_API import NovelAIAPI
-from novelai_api.ImagePreset import ImageModel, ImagePreset
+from novelai_api.ImagePreset import ImageGenerationType, ImageModel, ImagePreset
+
+__all__ = ["GeneratedImage", "NovelAIGenerator", "build_preset", "ImageGenerationType"]
 
 LOGGER = logging.getLogger(__name__)
 
