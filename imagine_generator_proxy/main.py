@@ -1,5 +1,4 @@
 import os
-import base64
 import asyncio
 import re
 import sqlite3
@@ -8,8 +7,6 @@ from logging.handlers import RotatingFileHandler
 import sys
 import time
 from pathlib import Path
-from typing import Optional
-from urllib.parse import quote
 try:
 	import yaml
 except Exception:
@@ -20,7 +17,12 @@ from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel
 
 from imagine_generator_proxy import experiment, gallery
-from imagine_generator_proxy.generation import NovelAIGenerator, ImageGenerationType
+from imagine_generator_proxy.cache import (
+	prepare_nonbinary_response,
+	read_cached_image,
+	write_cache_and_prepare_response,
+)
+from imagine_generator_proxy.generation import ImageGenerator, NovelAIGenerator, ImageGenerationType
 from imagine_generator_proxy.openrouter_reviewer import OpenRouterReviewer
 from imagine_generator_proxy.prompt_massager import (
 	MassagedPrompt,
@@ -193,7 +195,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 	LOGGER.info("Sending request to NovelAI. Queue size: %s", len(gens))
 
 	try:
-		image = await generator.generate(prompt, negative_prompt, library_quality_toggle=(version is None))
+		image = await generator.generate(prompt, negative_prompt, prompt_is_complete=(version is not None))
 
 		if image is None:
 			# cleanup generation event so waiters don't hang
@@ -248,7 +250,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 					character, digest[:12], attempt + 2, review_retries + 1,
 					(verdict.notes or "")[:200])
 				image = await generator.generate(attempt_prompt, attempt_negative,
-					library_quality_toggle=(version is None))
+					prompt_is_complete=(version is not None))
 				if image is None:
 					break
 		if verdict is not None and not verdict.approved:
@@ -273,78 +275,6 @@ async def generate_handler(request: web.Request) -> web.Response:
 			pass
 		gens.pop(digest, None)
 		return web.json_response({"error": str(e)}, status=500)
-
-
-def _response_headers(effective_prompt: Optional[str]) -> dict:
-	"""Headers exposing the effective prompt on raw (PNG) responses."""
-	if effective_prompt is None:
-		return {}
-	return {"X-Effective-Prompt": quote(effective_prompt, safe="")}
-
-
-def read_cached_image(cached_file: Path, want_raw: bool, context: str = None,
-		effective_prompt: Optional[str] = None, massager_version: Optional[int] = None):
-	"""Return a web Response or JSON response for the cached file, or None if not available.
-
-	`context` is used only to customize log messages when read fails.
-	"""
-	try:
-		if not cached_file.exists():
-			return None
-
-		data = cached_file.read_bytes()
-		if want_raw:
-			return web.Response(body=bytes(data), content_type="image/png",
-				headers=_response_headers(effective_prompt))
-
-		payload = {"name": cached_file.name, "image_b64": base64.b64encode(data).decode("utf-8"), "cached": True}
-		if effective_prompt is not None:
-			payload["effective_prompt"] = effective_prompt
-			payload["massager_version"] = massager_version
-			payload["massaged"] = massager_version is not None
-		return web.json_response(payload)
-	except Exception as e:
-		if context:
-			LOGGER.exception("Failed to read cached image (%s)", context)
-		else:
-			LOGGER.exception("Failed to read cached image")
-		return None
-
-
-def write_cache_and_prepare_response(data, char_dir: Path, cached_file: Path, want_raw: bool, gens: dict, digest: str, name: str,
-		effective_prompt: Optional[str] = None, massager_version: Optional[int] = None):
-	try:
-		char_dir.mkdir(parents=True, exist_ok=True)
-		cached_file.write_bytes(bytes(data))
-	except Exception:
-		LOGGER.exception("Failed to write cache file")
-
-	# signal waiting requests before returning
-	try:
-		gens[digest].set()
-	except Exception:
-		pass
-	gens.pop(digest, None)
-
-	if want_raw:
-		return web.Response(body=bytes(data), content_type="image/png",
-			headers=_response_headers(effective_prompt))
-
-	payload = {"name": name, "image_b64": base64.b64encode(data).decode("utf-8"), "cached": False}
-	if effective_prompt is not None:
-		payload["effective_prompt"] = effective_prompt
-		payload["massager_version"] = massager_version
-		payload["massaged"] = massager_version is not None
-	return web.json_response(payload)
-
-
-def prepare_nonbinary_response(name: str, data, gens: dict, digest: str):
-	try:
-		gens[digest].set()
-	except Exception:
-		pass
-	gens.pop(digest, None)
-	return web.json_response({"name": name, "image": str(data)})
 
 
 def load_config() -> dict:

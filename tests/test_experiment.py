@@ -29,8 +29,8 @@ class _StubGenerator:
 		self._fail_from = fail_from
 		self.prompts = []
 
-	async def generate(self, prompt, negative_prompt, library_quality_toggle):
-		self.prompts.append((prompt, negative_prompt, library_quality_toggle))
+	async def generate(self, prompt, negative_prompt, prompt_is_complete):
+		self.prompts.append((prompt, negative_prompt, prompt_is_complete))
 		self.calls += 1
 		if self.calls > self._fail_from:
 			return None

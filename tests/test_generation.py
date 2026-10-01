@@ -39,7 +39,7 @@ def _run(coro):
 def test_retry_then_success():
 	api = _StubAPI([BUSY, BUSY, ("image_0.png", b"fake-png-bytes")])
 	gen = NovelAIGenerator(api, {"generation_retries": 5, "generation_backoff": 0.0})
-	image = _run(gen.generate("prompt", "negative", library_quality_toggle=True))
+	image = _run(gen.generate("prompt", "negative", prompt_is_complete=True))
 	assert image is not None
 	assert image.name == "image_0.png"
 	assert image.data == b"fake-png-bytes"
@@ -48,14 +48,14 @@ def test_retry_then_success():
 def test_busy_exhaustion_returns_none():
 	api = _StubAPI([BUSY, BUSY])
 	gen = NovelAIGenerator(api, {"generation_retries": 2, "generation_backoff": 0.0})
-	assert _run(gen.generate("prompt", "negative", library_quality_toggle=True)) is None
+	assert _run(gen.generate("prompt", "negative", prompt_is_complete=True)) is None
 
 
 def test_non_busy_exception_propagates():
 	api = _StubAPI([Exception("connection reset")])
 	gen = NovelAIGenerator(api, {"generation_retries": 3, "generation_backoff": 0.0})
 	try:
-		_run(gen.generate("prompt", "negative", library_quality_toggle=True))
+		_run(gen.generate("prompt", "negative", prompt_is_complete=True))
 		raise AssertionError("expected exception")
 	except Exception as e:
 		assert "connection reset" in str(e)
@@ -81,9 +81,9 @@ def test_min_interval_paces_sequential_generations():
 	gen = NovelAIGenerator(api, {"generation_retries": 1, "generation_backoff": 0.0,
 		"generation_min_interval": 0.15})
 	start = time.monotonic()
-	first = _run(gen.generate("p", "n", library_quality_toggle=True))
+	first = _run(gen.generate("p", "n", prompt_is_complete=True))
 	mid = time.monotonic()
-	second = _run(gen.generate("p", "n", library_quality_toggle=True))
+	second = _run(gen.generate("p", "n", prompt_is_complete=True))
 	end = time.monotonic()
 	assert first is not None and second is not None
 	# first call starts immediately (no prior generation); second waits for the interval

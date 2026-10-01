@@ -120,7 +120,7 @@ async def run_experiment(app, character: str, raw_prompt: str, q_negative: str,
 	# --- variant 1: raw baseline (legacy assembly + legacy negatives) ---
 	raw_effective = legacy_assemble(raw_prompt)
 	raw_negative = build_negative_prompt(q_negative, app.get("config", {}), legacy=True)
-	image = await generator.generate(raw_effective, raw_negative, library_quality_toggle=True)
+	image = await generator.generate(raw_effective, raw_negative, prompt_is_complete=False)
 	raw_rel = None
 	if image is not None:
 		raw_rel = _save_image(cache_dir, character, run_id, "raw", bytes(image.data))
@@ -164,7 +164,7 @@ async def run_experiment(app, character: str, raw_prompt: str, q_negative: str,
 				suffix = f" (fix: {fix_applied})" if fix_applied else " (new seed)"
 				label = f"Massaged prompt — attempt {attempt + 1}{suffix}"
 
-			image = await generator.generate(attempt_prompt, chain_negative, library_quality_toggle=False)
+			image = await generator.generate(attempt_prompt, chain_negative, prompt_is_complete=True)
 			if image is None:
 				_record_image(db_path, run_id, variant, attempt_prompt, chain_negative, None,
 					None, None, "generation failed (NovelAI busy)", fix_applied, False)

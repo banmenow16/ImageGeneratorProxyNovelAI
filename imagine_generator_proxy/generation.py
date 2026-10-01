@@ -4,35 +4,51 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Protocol
 
 from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageGenerationType, ImageModel, ImagePreset
 
-__all__ = ["GeneratedImage", "NovelAIGenerator", "build_preset", "ImageGenerationType"]
+__all__ = ["GeneratedImage", "ImageGenerator", "NovelAIGenerator", "build_preset", "ImageGenerationType"]
 
 LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
 class GeneratedImage:
-	"""A single image returned by NovelAI."""
+	"""A single image returned by a generation backend."""
 
 	name: str
 	data: bytes
 	seed: Optional[int] = None
 
 
-def build_preset(model: ImageModel, library_quality_toggle: bool) -> ImagePreset:
+class ImageGenerator(Protocol):
+	"""Backend-neutral image generation interface.
+
+	Implementations (NovelAI today; e.g. Civitai/local model servers later)
+	generate one image for a prompt/negative-prompt pair. `prompt_is_complete`
+	is True when the caller (the prompt massager) already assembled the full
+	quality-tagged prompt: backends that auto-decorate prompts must not add
+	their own tags then. Backends with no auto-decoration may ignore it.
+	Returns None when the backend stays busy/unavailable after its retries;
+	raise on hard errors.
+	"""
+
+	async def generate(self, prompt: str, negative_prompt: str,
+			prompt_is_complete: bool) -> Optional[GeneratedImage]: ...
+
+
+def build_preset(model: ImageModel, add_quality_tags: bool) -> ImagePreset:
 	"""Build the default preset for `model`.
 
-	`library_quality_toggle` controls the library's automatic quality-tag
+	`add_quality_tags` controls the library's automatic quality-tag
 	suffix (", location, very aesthetic, masterpiece, no text" on v4.5). It
 	must be False when the prompt massager owns the quality tags, True to
 	keep the historical (legacy) behavior.
 	"""
 	preset = ImagePreset.from_default_config(model)
-	preset["quality_toggle"] = library_quality_toggle
+	preset["quality_toggle"] = add_quality_tags
 	return preset
 
 
@@ -51,12 +67,14 @@ class NovelAIGenerator:
 		self._last_started = 0.0
 
 	async def generate(
-		self, prompt: str, negative_prompt: str, library_quality_toggle: bool
+		self, prompt: str, negative_prompt: str, prompt_is_complete: bool
 	) -> Optional[GeneratedImage]:
 		"""Generate an image, retrying while NovelAI reports being busy.
 
 		Returns a GeneratedImage on success, or None when NovelAI remains
-		busy after `generation_retries` attempts.
+		busy after `generation_retries` attempts. See ImageGenerator for the
+		`prompt_is_complete` contract (inverted into the library's
+		quality_toggle here).
 		"""
 		max_retries = int(self._config.get("generation_retries", 5))
 		backoff = float(self._config.get("generation_backoff", 1.0))
@@ -65,7 +83,7 @@ class NovelAIGenerator:
 		name = None
 		data = None
 
-		preset = build_preset(self._model, library_quality_toggle)
+		preset = build_preset(self._model, add_quality_tags=not prompt_is_complete)
 
 		async with self._lock:
 			pause = self._last_started + self._min_interval - time.monotonic()
