@@ -18,6 +18,9 @@ class Verdict:
 	approved: bool
 	score: Optional[float] = None
 	notes: str = ""
+	# None on approval; "quality" (retryable, fail-open) or "minor"
+	# (fail-closed: the image is never served) on rejection.
+	category: Optional[str] = None
 
 
 class Reviewer(Protocol):

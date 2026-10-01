@@ -15,3 +15,12 @@ token: "pst-YOUR_TOKEN_HERE"
 # negative_prompt: "text, watermark, ..."  # optional: replaces the built-in negative blocks (string or list)
 # rules_file: rules.yaml   # optional overlay next to config.yaml; replaces the built-in rules
                            # wholesale and must define its own top-level version
+
+# Vision review of generated images via OpenRouter (Phase 2).
+# WARNING: enabling this sends every generated image to OpenRouter (third
+# party) and costs a small per-generation API fee.
+# openRouterToken: "sk-or-v1-..."  # required when vision_review is true
+# vision_review: true              # default false (no review, no upload, no cost)
+# reviewer_model: qwen/qwen3-vl-32b-instruct        # cheap first pass
+# reviewer_escalation_model: x-ai/grok-4.7         # second opinion on age flags
+# vision_review_retries: 1         # quality-rejection regenerations (new seed)

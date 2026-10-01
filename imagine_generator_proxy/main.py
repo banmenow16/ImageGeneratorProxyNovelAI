@@ -24,6 +24,7 @@ from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel
 
 from imagine_generator_proxy.generation import GeneratedImage, NovelAIGenerator, ImageGenerationType
+from imagine_generator_proxy.openrouter_reviewer import OpenRouterReviewer
 from imagine_generator_proxy.prompt_massager import (
 	MassagedPrompt,
 	PromptMassager,
@@ -224,12 +225,32 @@ async def generate_handler(request: web.Request) -> web.Response:
 			gens.pop(digest, None)
 			return web.json_response({"error": "novelai busy, try again later"}, status=503)
 
-		# Reviewer seam: Phase 2 vision review/retry slot-in point. The noop
-		# reviewer approves instantly; a rejecting reviewer only logs for now.
+		# Vision review (config-gated; NoopReviewer approves instantly).
+		# Quality rejections retry with a new seed and then serve anyway;
+		# minor-category rejections are fail-closed and never served.
 		reviewer = request.app.get("reviewer") or NoopReviewer()
-		verdict = await reviewer.review(bytes(image.data), prompt)
-		if not verdict.approved:
-			LOGGER.warning("Reviewer rejected image (score=%s): %s — serving anyway", verdict.score, verdict.notes)
+		review_retries = int(config.get("vision_review_retries", 1))
+		verdict = None
+		for attempt in range(review_retries + 1):
+			verdict = await reviewer.review(bytes(image.data), prompt)
+			if verdict.approved:
+				break
+			if verdict.category == "minor":
+				LOGGER.warning("Reviewer minor-flag (notes=%s) — refusing to serve", (verdict.notes or "")[:200])
+				try:
+					gens[digest].set()
+				except Exception:
+					pass
+				gens.pop(digest, None)
+				return web.json_response({"error": "image rejected by age-safety review"}, status=422)
+			if attempt < review_retries:
+				LOGGER.warning("Reviewer rejected on quality (score=%s): %s — regenerating",
+					verdict.score, (verdict.notes or "")[:200])
+				image = await generator.generate(prompt, negative_prompt, library_quality_toggle=(version is None))
+				if image is None:
+					break
+		if verdict is not None and not verdict.approved:
+			LOGGER.warning("Reviewer still rejects on quality after retries — serving anyway")
 
 		# Write cache outside the lock
 		if isinstance(image.data, (bytes, bytearray)):
@@ -420,9 +441,6 @@ async def on_startup(app: web.Application):
 	# Map of digest -> asyncio.Event for coordinating per-key generation waiters
 	app["generations"] = {}
 
-	# Post-generation image reviewer (Phase 2 seam; noop for now)
-	app["reviewer"] = NoopReviewer()
-
 	# Prepare cache directory
 	cache_dir = Path(__file__).parent / "cache"
 	try:
@@ -492,6 +510,13 @@ async def on_startup(app: web.Application):
 
 	# Generation wrapper (lock + retry/backoff) around the NovelAI API
 	app["generator"] = NovelAIGenerator(api, config, lock=app["generate_lock"])
+
+	# Post-generation image reviewer: two-tier OpenRouter vision review when
+	# enabled in config (images are sent to OpenRouter); noop otherwise.
+	if config.get("vision_review"):
+		app["reviewer"] = OpenRouterReviewer.from_config(config) or NoopReviewer()
+	else:
+		app["reviewer"] = NoopReviewer()
 
 	token = config.get("token") or os.environ.get("NOVELAI_TOKEN")
 	email = os.environ.get("NOVELAI_EMAIL")
