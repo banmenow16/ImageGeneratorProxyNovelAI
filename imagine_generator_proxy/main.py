@@ -11,6 +11,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 import traceback
+from typing import Optional
+from urllib.parse import quote
 try:
 	import yaml
 except Exception:
@@ -22,9 +24,39 @@ from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel
 
 from imagine_generator_proxy.generation import GeneratedImage, NovelAIGenerator, ImageGenerationType
+from imagine_generator_proxy.prompt_massager import (
+	MassagedPrompt,
+	PromptMassager,
+	build_negative_prompt,
+	legacy_assemble,
+)
 from imagine_generator_proxy.reviewer import NoopReviewer
 
 LOGGER = logging.getLogger(__name__)
+
+
+def compute_digest(character: str, prompt: str, negative_prompt: str, model, massager_version: Optional[int]) -> str:
+	"""Cache digest for a generation request.
+
+	massager_version None keeps the historical formula byte-identical so
+	bypass requests keep hitting the pre-massager cache. Massaged prompts
+	are namespaced with a "pmv<N>" prefix: bumping the rule version
+	regenerates, an unchanged version keeps everything cached.
+	"""
+	parts = [character, prompt, negative_prompt, str(model)]
+	if massager_version is not None:
+		parts.insert(0, "pmv%d" % massager_version)
+	return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def ensure_db_schema(conn: sqlite3.Connection) -> None:
+	"""Additive migration for columns the massager needs (idempotent)."""
+	cols = {row[1] for row in conn.execute("PRAGMA table_info(images)")}
+	if "raw_prompt" not in cols:
+		conn.execute("ALTER TABLE images ADD COLUMN raw_prompt TEXT")
+	if "massager_version" not in cols:
+		conn.execute("ALTER TABLE images ADD COLUMN massager_version INTEGER")
+	conn.commit()
 
 
 def configure_logging() -> None:
@@ -87,12 +119,10 @@ async def request_logging_middleware(request: web.Request, handler):
 
 async def generate_handler(request: web.Request) -> web.Response:
 	config = request.app.get("config", {})
-	initial_prompt = 'score_9, score_8_up, score_7_up, score_6_up, source_anime'
 	raw_prompt = request.query.get("prompt")
 	if not raw_prompt:
 		LOGGER.warning("Bad request: /generate is missing the 'prompt' query parameter")
 		return web.json_response({"error": "missing 'prompt' query parameter"}, status=400)
-	prompt = initial_prompt + ',' + raw_prompt
 
 	# Character name (used for namespacing cache). Keep only safe characters.
 	raw_character = request.query.get("character") or "default"
@@ -100,22 +130,42 @@ async def generate_handler(request: web.Request) -> web.Response:
 
 	# Cache lookup
 	cache_dir: Path = request.app.get("cache_dir") or (Path(__file__).parent / "cache")
-	# Load negative prompt: prefer query parameter `negative_prompt` if provided,
-	# otherwise fall back to config value or the built-in default.
-	q_negative = request.query.get("negative_prompt")
-	if(q_negative is None):
-		q_negative = ''  # Default empty if not provided
-	negative_prompt1 = 'text, watermark, signature, letters, writing, logo, advertisement, caption, error, emoji, chat, discord, message'
-	negative_prompt2 = 'deformed, ugly, blurry, lowres, extra limbs, mutated hands, poor anatomy'
-	negative_prompt3 = 'bad lighting, overexposed, underexposed, worst quality, low quality, jpeg artifacts, ugly, duplicate'
-	negative_prompt4 = 'unnatural proportions'
-	negative_prompt = ', '.join([negative_prompt1, negative_prompt2, negative_prompt3, negative_prompt4, q_negative])
+	q_negative = request.query.get("negative_prompt") or ""
 
+	# Massage the prompt. The safety filter runs on every path: inside
+	# massage() when massage mode is on, via check_safety() when bypassed.
+	massager: PromptMassager = request.app["massager"]
+	use_massage = massager.enabled and request.query.get("massage") not in ("0", "false")
+	if use_massage:
+		try:
+			result = massager.massage(raw_prompt, character)
+		except Exception:
+			# A massager bug must never break generation: fall back to the
+			# legacy assembly and the legacy (un-prefixed) digest formula.
+			LOGGER.exception("PromptMassager failed; falling back to legacy prompt assembly")
+			result = MassagedPrompt(original=raw_prompt, effective=legacy_assemble(raw_prompt), version=None)
+	else:
+		blocked = massager.check_safety(raw_prompt)
+		if blocked is not None:
+			result = MassagedPrompt(original=raw_prompt, effective=raw_prompt, version=None,
+				blocked_rule=blocked[0], blocked_reason=blocked[1])
+		else:
+			result = MassagedPrompt(original=raw_prompt, effective=legacy_assemble(raw_prompt), version=None)
 
-	# Build cache key from character, prompt, negative_prompt and model name
+	if result.blocked_reason is not None:
+		LOGGER.warning("Blocked prompt for character=%s rule=%s: %s", character, result.blocked_rule, result.blocked_reason)
+		return web.json_response({"error": "prompt blocked by safety filter", "rule": result.blocked_rule,
+			"reason": result.blocked_reason}, status=400)
+
+	prompt = result.effective
+	version = result.version
+	negative_prompt = build_negative_prompt(q_negative, config)
+
+	# Build cache key from character, prompt, negative_prompt and model name.
+	# version None keeps the historical formula so bypass requests still hit
+	# the pre-massager cache; massaged prompts are namespaced by rule version.
 	model = ImageModel.Anime_v45_Full
-	key_material = "|".join([character, prompt, negative_prompt, str(model)])
-	digest = hashlib.sha256(key_material.encode("utf-8")).hexdigest()
+	digest = compute_digest(character, prompt, negative_prompt, model, version)
 	char_dir = cache_dir / character
 	cached_file = char_dir / f"{digest}.png"
 
@@ -125,7 +175,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 	force = request.query.get("force") in ("1", "true")
 
 	if not force:
-		resp = read_cached_image(cached_file, want_raw)
+		resp = read_cached_image(cached_file, want_raw, effective_prompt=prompt, massager_version=version)
 		if resp:
 			return resp
 
@@ -146,7 +196,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 		except Exception:
 			pass
 
-		resp = read_cached_image(cached_file, want_raw, context="after wait")
+		resp = read_cached_image(cached_file, want_raw, context="after wait", effective_prompt=prompt, massager_version=version)
 		if resp:
 			return resp
 
@@ -160,7 +210,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 	LOGGER.info("Sending request to NovelAI. Queue size: %s", len(gens))
 
 	try:
-		image = await generator.generate(prompt, negative_prompt, library_quality_toggle=True)
+		image = await generator.generate(prompt, negative_prompt, library_quality_toggle=(version is None))
 
 		if image is None:
 			# cleanup generation event so waiters don't hang
@@ -180,12 +230,14 @@ async def generate_handler(request: web.Request) -> web.Response:
 
 		# Write cache outside the lock
 		if isinstance(image.data, (bytes, bytearray)):
-			resp = write_cache_and_prepare_response(image.data, char_dir, cached_file, want_raw, gens, digest, image.name)
+			resp = write_cache_and_prepare_response(image.data, char_dir, cached_file, want_raw, gens, digest, image.name,
+				effective_prompt=prompt, massager_version=version)
 			# Store in database
 			conn = sqlite3.connect(str(request.app["db_path"]))
 			try:
-				conn.execute('INSERT OR IGNORE INTO images (character, digest, prompt, negative_prompt, model) VALUES (?, ?, ?, ?, ?)',
-					(character, digest, prompt, negative_prompt, str(model)))
+				conn.execute('INSERT OR IGNORE INTO images (character, digest, prompt, negative_prompt, model, raw_prompt, massager_version)'
+					' VALUES (?, ?, ?, ?, ?, ?, ?)',
+					(character, digest, prompt, negative_prompt, str(model), raw_prompt, version))
 				conn.commit()
 			except Exception as e:
 				LOGGER.exception("Failed to store generated image in database")
@@ -206,7 +258,15 @@ async def generate_handler(request: web.Request) -> web.Response:
 		return web.json_response({"error": str(e)}, status=500)
 
 
-def read_cached_image(cached_file: Path, want_raw: bool, context: str = None):
+def _response_headers(effective_prompt: Optional[str]) -> dict:
+	"""Headers exposing the effective prompt on raw (PNG) responses."""
+	if effective_prompt is None:
+		return {}
+	return {"X-Effective-Prompt": quote(effective_prompt, safe="")}
+
+
+def read_cached_image(cached_file: Path, want_raw: bool, context: str = None,
+		effective_prompt: Optional[str] = None, massager_version: Optional[int] = None):
 	"""Return a web Response or JSON response for the cached file, or None if not available.
 
 	`context` is used only to customize log messages when read fails.
@@ -217,10 +277,15 @@ def read_cached_image(cached_file: Path, want_raw: bool, context: str = None):
 
 		data = cached_file.read_bytes()
 		if want_raw:
-			return web.Response(body=bytes(data), content_type="image/png")
+			return web.Response(body=bytes(data), content_type="image/png",
+				headers=_response_headers(effective_prompt))
 
-		img_b64 = base64.b64encode(data).decode("utf-8")
-		return web.json_response({"name": cached_file.name, "image_b64": img_b64, "cached": True})
+		payload = {"name": cached_file.name, "image_b64": base64.b64encode(data).decode("utf-8"), "cached": True}
+		if effective_prompt is not None:
+			payload["effective_prompt"] = effective_prompt
+			payload["massager_version"] = massager_version
+			payload["massaged"] = massager_version is not None
+		return web.json_response(payload)
 	except Exception as e:
 		if context:
 			LOGGER.exception("Failed to read cached image (%s)", context)
@@ -229,7 +294,8 @@ def read_cached_image(cached_file: Path, want_raw: bool, context: str = None):
 		return None
 
 
-def write_cache_and_prepare_response(data, char_dir: Path, cached_file: Path, want_raw: bool, gens: dict, digest: str, name: str):
+def write_cache_and_prepare_response(data, char_dir: Path, cached_file: Path, want_raw: bool, gens: dict, digest: str, name: str,
+		effective_prompt: Optional[str] = None, massager_version: Optional[int] = None):
 	try:
 		char_dir.mkdir(parents=True, exist_ok=True)
 		cached_file.write_bytes(bytes(data))
@@ -244,10 +310,15 @@ def write_cache_and_prepare_response(data, char_dir: Path, cached_file: Path, wa
 	gens.pop(digest, None)
 
 	if want_raw:
-		return web.Response(body=bytes(data), content_type="image/png")
+		return web.Response(body=bytes(data), content_type="image/png",
+			headers=_response_headers(effective_prompt))
 
-	img_b64 = base64.b64encode(data).decode("utf-8")
-	return web.json_response({"name": name, "image_b64": img_b64, "cached": False})
+	payload = {"name": name, "image_b64": base64.b64encode(data).decode("utf-8"), "cached": False}
+	if effective_prompt is not None:
+		payload["effective_prompt"] = effective_prompt
+		payload["massager_version"] = massager_version
+		payload["massaged"] = massager_version is not None
+	return web.json_response(payload)
 
 
 def prepare_nonbinary_response(name: str, data, gens: dict, digest: str):
@@ -369,6 +440,7 @@ async def on_startup(app: web.Application):
 		model TEXT,
 		first_appearance TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)''')
+	ensure_db_schema(conn)
 	conn.close()
 	app["db_path"] = db_path
 
@@ -411,6 +483,9 @@ async def on_startup(app: web.Application):
 
 	config = _load_config()
 	app["config"] = config
+
+	# Prompt massager (safety filter + cleanup + enhance rules)
+	app["massager"] = PromptMassager.from_config(config, Path(__file__).parent)
 
 	# Generation wrapper (lock + retry/backoff) around the NovelAI API
 	app["generator"] = NovelAIGenerator(api, config, lock=app["generate_lock"])

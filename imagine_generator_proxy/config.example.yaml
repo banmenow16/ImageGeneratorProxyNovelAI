@@ -8,3 +8,10 @@ token: "pst-YOUR_TOKEN_HERE"
 # Optional generation settings (defaults shown)
 # generation_retries: 5
 # generation_backoff: 1.0
+
+# Prompt massager (rewrites prompts to reduce bad generations)
+# prompt_massage: true     # false = legacy prompt assembly + legacy cache keys
+# safety_filter: true      # minor-coded content filter; runs even when prompt_massage is false
+# negative_prompt: "text, watermark, ..."  # optional: replaces the built-in negative blocks (string or list)
+# rules_file: rules.yaml   # optional overlay next to config.yaml; replaces the built-in rules
+                           # wholesale and must define its own top-level version

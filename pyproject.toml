@@ -10,6 +10,12 @@ dependencies = [
     "PyYAML>=6.0",
     "aiohttp>=3.8",
     "novelai>=0.34.1",
+    "Pillow>=10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
 ]
 
 [build-system]
