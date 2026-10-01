@@ -9,8 +9,8 @@ digest without restructuring the caching logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Protocol
+from dataclasses import dataclass, field
+from typing import List, Optional, Protocol
 
 
 @dataclass
@@ -21,6 +21,10 @@ class Verdict:
 	# None on approval; "quality" (retryable, fail-open) or "minor"
 	# (fail-closed: the image is never served) on rejection.
 	category: Optional[str] = None
+	# Reviewer-proposed repair tags for the next regeneration attempt:
+	# positive-prompt additions and negative-prompt additions ('neg:' entries).
+	fix_add: List[str] = field(default_factory=list)
+	fix_negate: List[str] = field(default_factory=list)
 
 
 class Reviewer(Protocol):
@@ -32,12 +36,12 @@ class Reviewer(Protocol):
 	"""
 
 	async def review(self, image: bytes, prompt: str, attempt: int = 0,
-			previous_notes: str = "") -> Verdict: ...
+			previous_notes: str = "", character: str = "") -> Verdict: ...
 
 
 class NoopReviewer:
 	"""Approves everything; the default until a real reviewer exists."""
 
 	async def review(self, image: bytes, prompt: str, attempt: int = 0,
-			previous_notes: str = "") -> Verdict:
+			previous_notes: str = "", character: str = "") -> Verdict:
 		return Verdict(approved=True, notes="noop reviewer")

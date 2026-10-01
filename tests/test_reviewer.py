@@ -176,3 +176,70 @@ def test_session_context_injected_on_retry_attempt():
 	assert "SESSION CONTEXT" in prompt
 	assert "attempt 2" in prompt
 	assert "fused fingers on left hand" in prompt
+
+
+# --- FIX proposals ---
+
+def test_parse_fix_extracts_add_and_negate():
+	from imagine_generator_proxy.openrouter_reviewer import parse_fix
+	add, negate = parse_fix("VERDICT: BAD: melted torso\nFIX: arms at sides, sitting upright, neg:fused fingers")
+	assert add == ["arms at sides", "sitting upright"]
+	assert negate == ["fused fingers"]
+
+
+def test_parse_fix_absent_returns_empty():
+	from imagine_generator_proxy.openrouter_reviewer import parse_fix
+	assert parse_fix("VERDICT: GOOD") == ([], [])
+	assert parse_fix("") == ([], [])
+
+
+def test_parse_fix_caps_entries_and_drops_prose():
+	from imagine_generator_proxy.openrouter_reviewer import parse_fix
+	long_prose = "a" * 80
+	add, negate = parse_fix(
+		f"FIX: t1, {long_prose}, t2, neg:n1, neg:n2, t3, t4, t5, t6, t7, t8")
+	assert long_prose not in add
+	assert len(add) + len(negate) <= 6
+
+
+def test_bad_verdict_carries_fix_into_verdict():
+	reviewer, _ = make_reviewer(["QC report\nVERDICT: BAD: extra arms\nFIX: arms at sides, neg:fused fingers"])
+	verdict = run(reviewer.review(b"img", "prompt"))
+	assert verdict.approved is False
+	assert verdict.fix_add == ["arms at sides"]
+	assert verdict.fix_negate == ["fused fingers"]
+
+
+def test_good_verdict_has_no_fix():
+	reviewer, _ = make_reviewer(["VERDICT: GOOD"])
+	verdict = run(reviewer.review(b"img", "prompt"))
+	assert verdict.fix_add == [] and verdict.fix_negate == []
+
+
+# --- retrieval hints (review history) ---
+
+def test_history_injected_when_available():
+	import sqlite3, tempfile, os
+	from imagine_generator_proxy.main import ensure_db_schema
+
+	fd, path = tempfile.mkstemp(suffix=".db")
+	os.close(fd)
+	conn = sqlite3.connect(path)
+	ensure_db_schema(conn)
+	conn.execute("INSERT INTO reviews (digest, character, approved, category, notes, attempt) "
+		"VALUES ('deadbeef', 'Naimi', 0, 'quality', 'melted torso on large chest', 0)")
+	conn.commit()
+	conn.close()
+
+	reviewer, completions = make_reviewer(["VERDICT: GOOD"])
+	reviewer._db_path = path
+	run(reviewer.review(b"img", "prompt", character="Naimi"))
+	os.unlink(path)
+	assert "REVIEW HISTORY" in completions.prompts[0]
+	assert "melted torso" in completions.prompts[0]
+
+
+def test_no_history_block_without_db():
+	reviewer, completions = make_reviewer(["VERDICT: GOOD"])
+	run(reviewer.review(b"img", "prompt", character="Naimi"))
+	assert "REVIEW HISTORY" not in completions.prompts[0]

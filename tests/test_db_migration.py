@@ -47,13 +47,14 @@ def test_review_logging_roundtrip():
 	ensure_db_schema(conn)
 	conn.close()
 
-	log_review_outcome(path, "abc123", "Naimi", Verdict(approved=False, category="quality", notes="fused fingers"), attempt=0)
+	log_review_outcome(path, "abc123", "Naimi", Verdict(approved=False, category="quality", notes="fused fingers"),
+		attempt=0, tags="huge breasts, arms overhead")
 	log_review_outcome(path, "abc123", "Naimi", Verdict(approved=True), attempt=1)
 	conn = sqlite3.connect(path)
-	rows = conn.execute("SELECT digest, approved, category, attempt FROM reviews ORDER BY id").fetchall()
+	rows = conn.execute("SELECT digest, approved, category, attempt, tags FROM reviews ORDER BY id").fetchall()
 	conn.close()
 	os.unlink(path)
-	assert rows == [("abc123", 0, "quality", 0), ("abc123", 1, None, 1)]
+	assert rows == [("abc123", 0, "quality", 0, "huge breasts, arms overhead"), ("abc123", 1, None, 1, "")]
 
 
 def test_migration_is_idempotent():

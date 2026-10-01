@@ -53,10 +53,11 @@ def compute_digest(character: str, prompt: str, negative_prompt: str, model, mas
 def ensure_db_schema(conn: sqlite3.Connection) -> None:
 	"""Additive migration for columns the massager needs (idempotent)."""
 	cols = {row[1] for row in conn.execute("PRAGMA table_info(images)")}
-	if "raw_prompt" not in cols:
-		conn.execute("ALTER TABLE images ADD COLUMN raw_prompt TEXT")
-	if "massager_version" not in cols:
-		conn.execute("ALTER TABLE images ADD COLUMN massager_version INTEGER")
+	if cols:  # images table exists (created by on_startup just before this)
+		if "raw_prompt" not in cols:
+			conn.execute("ALTER TABLE images ADD COLUMN raw_prompt TEXT")
+		if "massager_version" not in cols:
+			conn.execute("ALTER TABLE images ADD COLUMN massager_version INTEGER")
 	# Review memory: every vision-review outcome (approved and rejected) is
 	# recorded so future hint retrieval has history to learn from.
 	conn.execute('''CREATE TABLE IF NOT EXISTS reviews (
@@ -72,10 +73,13 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 	review_cols = {row[1] for row in conn.execute("PRAGMA table_info(reviews)")}
 	if "attempt" not in review_cols:
 		conn.execute("ALTER TABLE reviews ADD COLUMN attempt INTEGER DEFAULT 0")
+	if "tags" not in review_cols:
+		conn.execute("ALTER TABLE reviews ADD COLUMN tags TEXT")
 	conn.commit()
 
 
-def log_review_outcome(db_path, digest: str, character: str, verdict, attempt: int = 0) -> None:
+def log_review_outcome(db_path, digest: str, character: str, verdict, attempt: int = 0,
+		tags: str = "") -> None:
 	"""Persist a review outcome (best effort — never breaks the request)."""
 	if not db_path:
 		return
@@ -83,9 +87,10 @@ def log_review_outcome(db_path, digest: str, character: str, verdict, attempt: i
 		conn = sqlite3.connect(str(db_path))
 		try:
 			conn.execute(
-				"INSERT INTO reviews (digest, character, approved, category, notes, attempt) VALUES (?, ?, ?, ?, ?, ?)",
+				"INSERT INTO reviews (digest, character, approved, category, notes, attempt, tags)"
+				" VALUES (?, ?, ?, ?, ?, ?, ?)",
 				(digest, character, 1 if verdict.approved else 0, verdict.category,
-					(verdict.notes or "")[-1000:], attempt),
+					(verdict.notes or "")[-1000:], attempt, tags[-2000:]),
 			)
 			conn.commit()
 		finally:
@@ -260,19 +265,23 @@ async def generate_handler(request: web.Request) -> web.Response:
 			return web.json_response({"error": "novelai busy, try again later"}, status=503)
 
 		# Vision review (config-gated; NoopReviewer approves instantly).
-		# Quality rejections retry with a new seed; each attempt carries the
-		# previous rejection notes so the reviewer verifies the fix. Minor-
-		# category rejections are fail-closed and never served.
+		# Quality rejections regenerate with the reviewer's proposed tag fixes
+		# (safety-checked) plus a new seed; each attempt carries the previous
+		# rejection notes so the reviewer verifies the fix. Minor-category
+		# rejections are fail-closed and never served.
 		reviewer = request.app.get("reviewer") or NoopReviewer()
 		log_reviews = bool(config.get("vision_review"))
 		review_retries = int(config.get("vision_review_retries", 1))
 		verdict = None
 		previous_notes = ""
+		attempt_prompt = prompt
+		attempt_negative = negative_prompt
 		for attempt in range(review_retries + 1):
-			verdict = await reviewer.review(bytes(image.data), prompt,
-				attempt=attempt, previous_notes=previous_notes)
+			verdict = await reviewer.review(bytes(image.data), attempt_prompt,
+				attempt=attempt, previous_notes=previous_notes, character=character)
 			if log_reviews:
-				log_review_outcome(request.app.get("db_path"), digest, character, verdict, attempt=attempt)
+				log_review_outcome(request.app.get("db_path"), digest, character, verdict,
+					attempt=attempt, tags=attempt_prompt)
 			if verdict.approved:
 				break
 			previous_notes = verdict.notes or ""
@@ -285,9 +294,21 @@ async def generate_handler(request: web.Request) -> web.Response:
 				gens.pop(digest, None)
 				return web.json_response({"error": "image rejected by age-safety review"}, status=422)
 			if attempt < review_retries:
-				LOGGER.warning("Reviewer rejected on quality (score=%s): %s — regenerating",
-					verdict.score, (verdict.notes or "")[:200])
-				image = await generator.generate(prompt, negative_prompt, library_quality_toggle=(version is None))
+				fix_add = [t for t in verdict.fix_add if massager.check_safety(t) is None]
+				fix_negate = [t for t in verdict.fix_negate if massager.check_safety(t) is None]
+				if fix_add:
+					attempt_prompt = attempt_prompt + ", " + ", ".join(fix_add)
+					LOGGER.info("Applying reviewer fix tags: %s", ", ".join(fix_add))
+				if fix_negate:
+					attempt_negative = attempt_negative + ", " + ", ".join(fix_negate)
+					LOGGER.info("Applying reviewer fix negatives: %s", ", ".join(fix_negate))
+				LOGGER.warning("REGENERATING %s for character=%s digest=%s attempt=%d/%d "
+					"(reviewer rejected on quality: %s)",
+					"with fix tags" if (fix_add or fix_negate) else "with new seed",
+					character, digest[:12], attempt + 2, review_retries + 1,
+					(verdict.notes or "")[:200])
+				image = await generator.generate(attempt_prompt, attempt_negative,
+					library_quality_toggle=(version is None))
 				if image is None:
 					break
 		if verdict is not None and not verdict.approved:
@@ -555,7 +576,7 @@ async def on_startup(app: web.Application):
 	# Post-generation image reviewer: two-tier OpenRouter vision review when
 	# enabled in config (images are sent to OpenRouter); noop otherwise.
 	if config.get("vision_review"):
-		app["reviewer"] = OpenRouterReviewer.from_config(config) or NoopReviewer()
+		app["reviewer"] = OpenRouterReviewer.from_config(config, db_path=app["db_path"]) or NoopReviewer()
 	else:
 		app["reviewer"] = NoopReviewer()
 
