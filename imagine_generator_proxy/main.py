@@ -22,6 +22,7 @@ from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel
 
 from imagine_generator_proxy.generation import GeneratedImage, NovelAIGenerator, ImageGenerationType
+from imagine_generator_proxy.reviewer import NoopReviewer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -169,6 +170,13 @@ async def generate_handler(request: web.Request) -> web.Response:
 				pass
 			gens.pop(digest, None)
 			return web.json_response({"error": "novelai busy, try again later"}, status=503)
+
+		# Reviewer seam: Phase 2 vision review/retry slot-in point. The noop
+		# reviewer approves instantly; a rejecting reviewer only logs for now.
+		reviewer = request.app.get("reviewer") or NoopReviewer()
+		verdict = await reviewer.review(bytes(image.data), prompt)
+		if not verdict.approved:
+			LOGGER.warning("Reviewer rejected image (score=%s): %s — serving anyway", verdict.score, verdict.notes)
 
 		# Write cache outside the lock
 		if isinstance(image.data, (bytes, bytearray)):
@@ -337,6 +345,9 @@ async def on_startup(app: web.Application):
 
 	# Map of digest -> asyncio.Event for coordinating per-key generation waiters
 	app["generations"] = {}
+
+	# Post-generation image reviewer (Phase 2 seam; noop for now)
+	app["reviewer"] = NoopReviewer()
 
 	# Prepare cache directory
 	cache_dir = Path(__file__).parent / "cache"
