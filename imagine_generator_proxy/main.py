@@ -23,6 +23,7 @@ from aiohttp.resolver import AsyncResolver
 from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel
 
+from imagine_generator_proxy import experiment
 from imagine_generator_proxy.generation import GeneratedImage, NovelAIGenerator, ImageGenerationType
 from imagine_generator_proxy.openrouter_reviewer import OpenRouterReviewer
 from imagine_generator_proxy.prompt_massager import (
@@ -75,6 +76,35 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 		conn.execute("ALTER TABLE reviews ADD COLUMN attempt INTEGER DEFAULT 0")
 	if "tags" not in review_cols:
 		conn.execute("ALTER TABLE reviews ADD COLUMN tags TEXT")
+	# Experiment workbench: provenance for /experiment runs (raw baseline +
+	# massaged review chain), every attempt stored and the accepted one
+	# flagged final.
+	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_runs (
+		id INTEGER PRIMARY KEY,
+		character TEXT,
+		raw_prompt TEXT,
+		raw_negative TEXT,
+		effective_prompt TEXT,
+		effective_negative TEXT,
+		massager_version INTEGER,
+		applied_rules TEXT,
+		removed_tags TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)''')
+	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_images (
+		id INTEGER PRIMARY KEY,
+		run_id INTEGER,
+		variant TEXT,
+		prompt_used TEXT,
+		negative_used TEXT,
+		image_path TEXT,
+		approved INTEGER,
+		category TEXT,
+		notes TEXT,
+		fix_applied TEXT,
+		is_final INTEGER DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)''')
 	conn.commit()
 
 
@@ -580,6 +610,10 @@ async def on_startup(app: web.Application):
 	else:
 		app["reviewer"] = NoopReviewer()
 
+	# Experiment workbench reviewer: runs whenever an OpenRouter key exists,
+	# independently of the production vision_review flag.
+	app["experiment_reviewer"] = experiment.build_experiment_reviewer(config, app["db_path"])
+
 	token = config.get("token") or os.environ.get("NOVELAI_TOKEN")
 	email = os.environ.get("NOVELAI_EMAIL")
 	password = os.environ.get("NOVELAI_PASSWORD")
@@ -610,6 +644,7 @@ def create_app() -> web.Application:
 	app.router.add_get("/", gallery_handler)
 	app.router.add_get("/folder/{character}", folder_handler)
 	app.router.add_static('/cache', str(Path(__file__).parent / "cache"))
+	experiment.add_routes(app)
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)
 	return app

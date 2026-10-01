@@ -2,4 +2,5 @@ include README.md
 include LICENSE
 include imagine_generator_proxy/config.example.yaml
 include imagine_generator_proxy/rule_data.json
+include imagine_generator_proxy/experiment.html
 recursive-include imagine_generator_proxy *.yaml *.yml

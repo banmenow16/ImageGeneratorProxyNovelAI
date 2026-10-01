@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pipeline Experiment Workbench</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+	:root {
+		--bg: #14161a; --panel: #1d2026; --card: #22262e; --border: #333842;
+		--text: #e6e9ee; --muted: #9aa3af; --accent: #6ea8fe; --good: #4cc38a;
+		--bad: #e5524b; --warn: #e7a33e; --final: #b48ef0;
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; padding: 20px; background: var(--bg); color: var(--text);
+		font-family: "Segoe UI", system-ui, sans-serif; }
+	h1 { margin: 0 0 4px; font-size: 22px; }
+	h2 { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 24px 0 10px; }
+	.sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+	a { color: var(--accent); }
+	.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+	form { display: grid; grid-template-columns: 140px 1fr; gap: 10px 12px; align-items: center; }
+	label { color: var(--muted); font-size: 13px; }
+	input[type=text], textarea { background: var(--card); color: var(--text); border: 1px solid var(--border);
+		border-radius: 6px; padding: 8px 10px; font-size: 13px; width: 100%; font-family: inherit; }
+	textarea { resize: vertical; min-height: 54px; }
+	.checks { grid-column: 2; display: flex; gap: 18px; align-items: center; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+	.checks label { display: flex; gap: 6px; align-items: center; color: var(--text); }
+	select { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+	button { grid-column: 2; justify-self: start; background: var(--accent); color: #10131a; font-weight: 600;
+		border: 0; border-radius: 7px; padding: 10px 22px; font-size: 14px; cursor: pointer; }
+	button:disabled { opacity: .5; cursor: wait; }
+	#status { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 18px; }
+	#status.err { color: var(--bad); }
+	.badge { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+	.badge.approved { background: rgba(76,195,138,.16); color: var(--good); }
+	.badge.rejected { background: rgba(229,82,75,.16); color: var(--bad); }
+	.badge.unreviewed { background: rgba(154,163,175,.15); color: var(--muted); }
+	.badge.final { background: rgba(180,142,240,.16); color: var(--final); }
+	.badge.minor { background: rgba(229,82,75,.25); color: var(--bad); }
+	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+	.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+		display: flex; flex-direction: column; }
+	.card.final-card { border-color: var(--final); box-shadow: 0 0 0 1px var(--final); }
+	.card img { width: 100%; height: auto; display: block; background: #0d0f12; min-height: 120px; }
+	.noimg { display: flex; align-items: center; justify-content: center; min-height: 200px; color: var(--muted); font-size: 13px; }
+	.card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+	.card-title { font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+	.card-title .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+	details { font-size: 12px; color: var(--muted); }
+	details summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+	.mono { font-family: Consolas, monospace; font-size: 11.5px; word-break: break-word; color: var(--c, var(--muted)); }
+	.notes { font-size: 12px; color: var(--muted); white-space: pre-wrap; max-height: 150px; overflow-y: auto; }
+	.massager-panel { font-size: 12.5px; display: grid; gap: 8px; }
+	.massager-panel .row { display: grid; grid-template-columns: 130px 1fr; gap: 8px; }
+	.massager-panel .k { color: var(--muted); }
+	.rules { display: flex; flex-wrap: wrap; gap: 5px; }
+	.rules span { background: rgba(110,168,254,.12); color: var(--accent); border-radius: 4px; padding: 1px 7px; font-size: 11px; }
+	.rules span.removed { background: rgba(229,82,75,.12); color: var(--bad); }
+	#history { display: grid; gap: 8px; }
+	.run-row { display: flex; gap: 12px; align-items: baseline; font-size: 13px; color: var(--muted); cursor: pointer; }
+	.run-row:hover .rid { color: var(--accent); }
+	.run-row .rid { font-family: Consolas, monospace; color: var(--text); }
+</style>
+</head>
+<body>
+<h1>Pipeline Experiment Workbench</h1>
+<div class="sub">raw baseline → massaged prompt → review / fix / regenerate chain — every step visible</div>
+
+<div class="panel">
+	<form id="form">
+		<label for="character">Character</label>
+		<input type="text" id="character" value="Naimi">
+		<label for="prompt">Positive prompt</label>
+		<textarea id="prompt" placeholder="e.g. topless woman sitting on bed, massive heavy breasts, arms crossed underneath, looking at viewer, bedroom, soft lighting"></textarea>
+		<label for="negative">Negative prompt <span style="opacity:.6">(optional)</span></label>
+		<input type="text" id="negative" placeholder="appended to the built-in negative blocks">
+		<label>Options</label>
+		<div class="checks">
+			<label><input type="checkbox" id="massage" checked> use massager</label>
+			<label><input type="checkbox" id="review" checked> vision review loop</label>
+			<label>retries <select id="retries"><option>0</option><option selected>1</option><option>2</option><option>3</option></select></label>
+			<span id="reviewer-note"></span>
+		</div>
+		<label></label>
+		<button id="go" type="submit">Run experiment</button>
+	</form>
+	<div id="status"></div>
+</div>
+
+<div id="massager-sec" style="display:none">
+	<h2>Massager</h2>
+	<div class="panel massager-panel" id="massager"></div>
+</div>
+
+<h2>Images</h2>
+<div class="grid" id="cards"></div>
+
+<h2>Recent runs</h2>
+<div class="panel" id="history"><span class="sub" style="padding:4px">loading…</span></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let startedAt = 0, timer = null;
+
+function setStatus(text, err) {
+	const s = $("status");
+	s.textContent = text;
+	s.className = err ? "err" : "";
+}
+
+function badge(v) {
+	if (v.approved === true) return '<span class="badge approved">approved</span>';
+	if (v.approved === false && v.category === "minor") return '<span class="badge minor">age-flag</span>';
+	if (v.approved === false) return '<span class="badge rejected">rejected</span>';
+	return '<span class="badge unreviewed">unreviewed</span>';
+}
+
+function card(v) {
+	const img = v.image_url
+		? `<img src="${v.image_url}" loading="lazy" alt="${v.variant}">`
+		: `<div class="noimg">generation failed</div>`;
+	const final = v.is_final ? '<span class="badge final">final</span>' : "";
+	return `<div class="card ${v.is_final ? "final-card" : ""}">
+		${img}
+		<div class="card-body">
+			<div class="card-title">${v.label}<span class="badges">${badge(v)}${final}</span></div>
+			${v.fix_applied ? `<div class="mono" style="--c:var(--good)">fix: ${esc(v.fix_applied)}</div>` : ""}
+			<details><summary>prompt used</summary><div class="mono">${esc(v.prompt)}</div>
+				<div class="mono" style="margin-top:6px; opacity:.75">neg: ${esc(v.negative)}</div></details>
+			${v.notes ? `<details open><summary>reviewer notes</summary><div class="notes">${esc(v.notes)}</div></details>` : ""}
+		</div>
+	</div>`;
+}
+
+function esc(s) {
+	return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderRun(run) {
+	const m = run.massager;
+	if (m) {
+		$("massager-sec").style.display = "";
+		$("massager").innerHTML = `
+			<div class="row"><div class="k">effective prompt</div><div class="mono" style="--c:var(--text)">${esc(m.effective)}</div></div>
+			<div class="row"><div class="k">effective negative</div><div class="mono">${esc(m.negative)}</div></div>
+			<div class="row"><div class="k">applied rules</div><div class="rules">${(m.applied_rules || []).map(r => `<span>${esc(r)}</span>`).join("") || "—"}</div></div>
+			<div class="row"><div class="k">removed</div><div class="rules">${(m.removed || []).map(r => `<span class="removed">${esc(r)}</span>`).join("") || "—"}</div></div>
+			<div class="row"><div class="k">rule version</div><div class="mono">pmv${m.version}</div></div>`;
+	} else {
+		$("massager-sec").style.display = "none";
+	}
+	$("cards").innerHTML = (run.variants || []).map(card).join("");
+}
+
+async function loadHistory() {
+	try {
+		const res = await fetch("/experiment/runs?limit=15");
+		const data = await res.json();
+		if (data.reviewer_available === false) {
+			$("reviewer-note").textContent = "(no OpenRouter key — review loop disabled)";
+		}
+		const el = $("history");
+		if (!data.runs.length) { el.innerHTML = '<span class="sub" style="padding:4px">no runs yet</span>'; return; }
+		el.innerHTML = data.runs.map(r => {
+			const fin = (r.variants || []).filter(v => v.is_final).length;
+			return `<div class="run-row" data-id="${r.run_id}">
+				<span class="rid">#${r.run_id}</span><span>${esc(r.character)}</span>
+				<span>${esc((r.raw_prompt || "").slice(0, 70))}…</span>
+				<span>${(r.variants || []).length} images, ${fin} final</span></div>`;
+		}).join("");
+		el.querySelectorAll(".run-row").forEach(row => row.onclick = async () => {
+			const res = await fetch("/experiment/run/" + row.dataset.id);
+			if (res.ok) renderRun(await res.json());
+			window.scrollTo({ top: 0, behavior: "smooth" });
+		});
+	} catch (e) {
+		$("history").innerHTML = '<span class="sub" style="padding:4px">history unavailable</span>';
+	}
+}
+
+$("form").addEventListener("submit", async (ev) => {
+	ev.preventDefault();
+	const body = {
+		character: $("character").value,
+		prompt: $("prompt").value,
+		negative: $("negative").value,
+		massage: $("massage").checked,
+		review: $("review").checked,
+		retries: parseInt($("retries").value, 10),
+	};
+	$("go").disabled = true;
+	startedAt = Date.now();
+	timer = setInterval(() => setStatus(`running… ${((Date.now() - startedAt) / 1000).toFixed(0)}s (a full chain can take a minute)`), 500);
+	setStatus("running…");
+	$("cards").innerHTML = "";
+	try {
+		const res = await fetch("/experiment/run", {
+			method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+		});
+		const data = await res.json();
+		if (!res.ok) {
+			setStatus(`error ${res.status}: ${data.error}${data.rule ? ` (rule: ${data.rule} — ${data.reason || ""})` : ""}`, true);
+		} else {
+			setStatus(`done in ${((Date.now() - startedAt) / 1000).toFixed(0)}s — run #${data.run_id}`);
+			renderRun(data);
+			loadHistory();
+		}
+	} catch (e) {
+		setStatus("request failed: " + e, true);
+	} finally {
+		clearInterval(timer);
+		$("go").disabled = false;
+	}
+});
+
+loadHistory();
+</script>
+</body>
+</html>
