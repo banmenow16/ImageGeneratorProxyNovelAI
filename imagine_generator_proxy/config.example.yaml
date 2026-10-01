@@ -8,6 +8,9 @@ token: "pst-YOUR_TOKEN_HERE"
 # Optional generation settings (defaults shown)
 # generation_retries: 5
 # generation_backoff: 1.0
+# generation_min_interval: 1.0   # minimum seconds between NovelAI generation
+                                 # starts (proactive pacing; 429s are also
+                                 # retried with exponential backoff)
 
 # Prompt massager (rewrites prompts to reduce bad generations)
 # prompt_massage: true     # false = legacy prompt assembly + legacy cache keys

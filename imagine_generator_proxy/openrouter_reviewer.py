@@ -126,11 +126,24 @@ class OpenRouterReviewer:
 		)
 		return (resp.choices[0].message.content or "").strip()
 
-	async def review(self, image: bytes, prompt: str) -> Verdict:
+	async def review(self, image: bytes, prompt: str, attempt: int = 0,
+			previous_notes: str = "") -> Verdict:
 		image_b64 = base64.b64encode(image).decode()
 
+		# Session context: on regenerations, tell the reviewer which attempt
+		# this is and why the previous one was rejected, so it can verify the
+		# fix instead of re-assessing blind.
+		qc_prompt = QC_PROMPT
+		if attempt > 0 and previous_notes:
+			qc_prompt += (
+				f" SESSION CONTEXT: this is regeneration attempt {attempt + 1} for the same "
+				f"prompt. The previous attempt was rejected with this review: \"{previous_notes[:600]}\". "
+				"Assess the current image normally, and specifically state whether the previous "
+				"issues are resolved."
+			)
+
 		try:
-			first = await self._chat(self.first_pass_model, QC_PROMPT, image_b64)
+			first = await self._chat(self.first_pass_model, qc_prompt, image_b64)
 		except Exception as e:
 			LOGGER.error("First-pass review failed (%s); approving (fail-open)", e)
 			return Verdict(approved=True, notes=f"first-pass error: {e}")

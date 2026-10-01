@@ -24,13 +24,20 @@ class Verdict:
 
 
 class Reviewer(Protocol):
-	"""Score a generated image against the prompt it was generated from."""
+	"""Score a generated image against the prompt it was generated from.
 
-	async def review(self, image: bytes, prompt: str) -> Verdict: ...
+	`attempt` (0-based) and `previous_notes` (the prior attempt's rejection
+	notes) carry the regeneration session, so reviewers can verify whether
+	earlier defects were fixed instead of starting from scratch.
+	"""
+
+	async def review(self, image: bytes, prompt: str, attempt: int = 0,
+			previous_notes: str = "") -> Verdict: ...
 
 
 class NoopReviewer:
 	"""Approves everything; the default until a real reviewer exists."""
 
-	async def review(self, image: bytes, prompt: str) -> Verdict:
+	async def review(self, image: bytes, prompt: str, attempt: int = 0,
+			previous_notes: str = "") -> Verdict:
 		return Verdict(approved=True, notes="noop reviewer")

@@ -66,12 +66,16 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 		approved INTEGER,
 		category TEXT,
 		notes TEXT,
+		attempt INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)''')
+	review_cols = {row[1] for row in conn.execute("PRAGMA table_info(reviews)")}
+	if "attempt" not in review_cols:
+		conn.execute("ALTER TABLE reviews ADD COLUMN attempt INTEGER DEFAULT 0")
 	conn.commit()
 
 
-def log_review_outcome(db_path, digest: str, character: str, verdict) -> None:
+def log_review_outcome(db_path, digest: str, character: str, verdict, attempt: int = 0) -> None:
 	"""Persist a review outcome (best effort — never breaks the request)."""
 	if not db_path:
 		return
@@ -79,8 +83,9 @@ def log_review_outcome(db_path, digest: str, character: str, verdict) -> None:
 		conn = sqlite3.connect(str(db_path))
 		try:
 			conn.execute(
-				"INSERT INTO reviews (digest, character, approved, category, notes) VALUES (?, ?, ?, ?, ?)",
-				(digest, character, 1 if verdict.approved else 0, verdict.category, (verdict.notes or "")[-1000:]),
+				"INSERT INTO reviews (digest, character, approved, category, notes, attempt) VALUES (?, ?, ?, ?, ?, ?)",
+				(digest, character, 1 if verdict.approved else 0, verdict.category,
+					(verdict.notes or "")[-1000:], attempt),
 			)
 			conn.commit()
 		finally:
@@ -255,18 +260,24 @@ async def generate_handler(request: web.Request) -> web.Response:
 			return web.json_response({"error": "novelai busy, try again later"}, status=503)
 
 		# Vision review (config-gated; NoopReviewer approves instantly).
-		# Quality rejections retry with a new seed and then serve anyway;
-		# minor-category rejections are fail-closed and never served.
+		# Quality rejections retry with a new seed; each attempt carries the
+		# previous rejection notes so the reviewer verifies the fix. Minor-
+		# category rejections are fail-closed and never served.
 		reviewer = request.app.get("reviewer") or NoopReviewer()
+		log_reviews = bool(config.get("vision_review"))
 		review_retries = int(config.get("vision_review_retries", 1))
 		verdict = None
+		previous_notes = ""
 		for attempt in range(review_retries + 1):
-			verdict = await reviewer.review(bytes(image.data), prompt)
+			verdict = await reviewer.review(bytes(image.data), prompt,
+				attempt=attempt, previous_notes=previous_notes)
+			if log_reviews:
+				log_review_outcome(request.app.get("db_path"), digest, character, verdict, attempt=attempt)
 			if verdict.approved:
 				break
+			previous_notes = verdict.notes or ""
 			if verdict.category == "minor":
 				LOGGER.warning("Reviewer minor-flag (notes=%s) — refusing to serve", (verdict.notes or "")[:200])
-				log_review_outcome(request.app.get("db_path"), digest, character, verdict)
 				try:
 					gens[digest].set()
 				except Exception:
@@ -281,8 +292,6 @@ async def generate_handler(request: web.Request) -> web.Response:
 					break
 		if verdict is not None and not verdict.approved:
 			LOGGER.warning("Reviewer still rejects on quality after retries — serving anyway")
-		if verdict is not None:
-			log_review_outcome(request.app.get("db_path"), digest, character, verdict)
 
 		# Write cache outside the lock
 		if isinstance(image.data, (bytes, bytearray)):

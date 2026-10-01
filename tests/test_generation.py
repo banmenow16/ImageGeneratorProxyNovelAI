@@ -72,3 +72,20 @@ def test_generate_uses_global_lock_serially():
 	lock = asyncio.Lock()
 	gen = NovelAIGenerator(api, {"generation_retries": 1, "generation_backoff": 0.0}, lock=lock)
 	assert gen._lock is lock
+
+
+def test_min_interval_paces_sequential_generations():
+	import time
+
+	api = _StubAPI([("image_0.png", b"a"), ("image_0.png", b"b")])
+	gen = NovelAIGenerator(api, {"generation_retries": 1, "generation_backoff": 0.0,
+		"generation_min_interval": 0.15})
+	start = time.monotonic()
+	first = _run(gen.generate("p", "n", library_quality_toggle=True))
+	mid = time.monotonic()
+	second = _run(gen.generate("p", "n", library_quality_toggle=True))
+	end = time.monotonic()
+	assert first is not None and second is not None
+	# first call starts immediately (no prior generation); second waits for the interval
+	assert mid - start < 0.15
+	assert end - mid >= 0.10  # allowed small scheduling slack below the nominal 0.15

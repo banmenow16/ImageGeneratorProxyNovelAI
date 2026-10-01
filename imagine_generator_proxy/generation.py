@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -43,6 +44,11 @@ class NovelAIGenerator:
 		self._config = config
 		self._lock = lock or asyncio.Lock()
 		self._model = ImageModel.Anime_v45_Full
+		# Proactive pacing: generations are serialized by the lock, but this
+		# additionally spaces their starts at least `generation_min_interval`
+		# seconds apart so queued bursts don't fire back-to-back at NovelAI.
+		self._min_interval = float(config.get("generation_min_interval", 1.0))
+		self._last_started = 0.0
 
 	async def generate(
 		self, prompt: str, negative_prompt: str, library_quality_toggle: bool
@@ -62,6 +68,10 @@ class NovelAIGenerator:
 		preset = build_preset(self._model, library_quality_toggle)
 
 		async with self._lock:
+			pause = self._last_started + self._min_interval - time.monotonic()
+			if pause > 0:
+				await asyncio.sleep(pause)
+			self._last_started = time.monotonic()
 			while attempt < max_retries:
 				try:
 					async for pair in self._api.high_level.generate_image(

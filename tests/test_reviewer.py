@@ -45,9 +45,11 @@ class _StubCompletions:
 	def __init__(self, responses):
 		self._responses = list(responses)
 		self.calls = []
+		self.prompts = []
 
 	async def create(self, **kwargs):
 		self.calls.append(kwargs.get("model"))
+		self.prompts.append(kwargs["messages"][0]["content"][0]["text"])
 		if not self._responses:
 			raise AssertionError("stub exhausted")
 		resp = self._responses.pop(0)
@@ -157,3 +159,20 @@ def test_qc_prompt_carries_casebook_hints():
 	# the evolving failure-mode casebook from rule_data.json is injected
 	assert "failure modes" in QC_PROMPT
 	assert "fused or extra fingers" in QC_PROMPT
+
+
+# --- session context (regeneration attempt chains) ---
+
+def test_no_session_context_on_first_attempt():
+	reviewer, completions = make_reviewer(["VERDICT: GOOD"])
+	run(reviewer.review(b"img", "prompt", attempt=0, previous_notes=""))
+	assert "SESSION CONTEXT" not in completions.prompts[0]
+
+
+def test_session_context_injected_on_retry_attempt():
+	reviewer, completions = make_reviewer(["VERDICT: GOOD"])
+	run(reviewer.review(b"img", "prompt", attempt=1, previous_notes="fused fingers on left hand"))
+	prompt = completions.prompts[0]
+	assert "SESSION CONTEXT" in prompt
+	assert "attempt 2" in prompt
+	assert "fused fingers on left hand" in prompt
