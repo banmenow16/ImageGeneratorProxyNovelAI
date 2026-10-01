@@ -14,6 +14,9 @@ Run
 python -m imagine_generator_proxy
 ```
 
+Optional flags: `--port 8099` and `--host 127.0.0.1` (port also read from the
+`PORT` environment variable, default 8080).
+
 Or use the provided start scripts for convenience.
 start_server.ps1
 start_server.sh

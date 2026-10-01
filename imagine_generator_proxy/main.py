@@ -529,6 +529,6 @@ def create_app() -> web.Application:
 
 
 if __name__ == "__main__":
-	port = int(os.environ.get("PORT", "8080"))
-	web.run_app(create_app(), host="0.0.0.0", port=port)
+	from imagine_generator_proxy.__main__ import main
+	main()
 
