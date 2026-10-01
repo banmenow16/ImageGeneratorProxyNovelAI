@@ -19,7 +19,9 @@ from aiohttp import web, ClientSession, TCPConnector
 from aiohttp.resolver import AsyncResolver
 
 from novelai_api.NovelAI_API import NovelAIAPI
-from novelai_api.ImagePreset import ImageModel, ImagePreset, ImageGenerationType
+from novelai_api.ImagePreset import ImageModel
+
+from imagine_generator_proxy.generation import GeneratedImage, NovelAIGenerator, ImageGenerationType
 
 LOGGER = logging.getLogger(__name__)
 
@@ -152,22 +154,14 @@ async def generate_handler(request: web.Request) -> web.Response:
 		gen_event = asyncio.Event()
 		gens[digest] = gen_event
 
-	api: NovelAIAPI = request.app["novelai_api"]
-
-	preset = ImagePreset.from_default_config(model)
-
-	# Use global generate lock to ensure only one request hits NovelAI at a time
-	lock: asyncio.Lock = request.app.get("generate_lock")
-	if lock is None:
-		# fallback: create one (should normally be created on startup)
-		lock = asyncio.Lock()
+	generator: NovelAIGenerator = request.app["generator"]
 
 	LOGGER.info("Sending request to NovelAI. Queue size: %s", len(gens))
 
 	try:
-		name, data = await novelai_generate(api, prompt, model, preset, negative_prompt, lock, config)
+		image = await generator.generate(prompt, negative_prompt, library_quality_toggle=True)
 
-		if name is None and data is None:
+		if image is None:
 			# cleanup generation event so waiters don't hang
 			try:
 				gens[digest].set()
@@ -177,8 +171,8 @@ async def generate_handler(request: web.Request) -> web.Response:
 			return web.json_response({"error": "novelai busy, try again later"}, status=503)
 
 		# Write cache outside the lock
-		if isinstance(data, (bytes, bytearray)):
-			resp = write_cache_and_prepare_response(data, char_dir, cached_file, want_raw, gens, digest, name)
+		if isinstance(image.data, (bytes, bytearray)):
+			resp = write_cache_and_prepare_response(image.data, char_dir, cached_file, want_raw, gens, digest, image.name)
 			# Store in database
 			conn = sqlite3.connect(str(request.app["db_path"]))
 			try:
@@ -192,7 +186,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 			return resp
 
 		# If data is not binary, return it as text in JSON
-		return prepare_nonbinary_response(name, data, gens, digest)
+		return prepare_nonbinary_response(image.name, image.data, gens, digest)
 	except Exception as e:
 		# log error server-side for easier debugging
 		LOGGER.exception("/generate handler error")
@@ -202,50 +196,6 @@ async def generate_handler(request: web.Request) -> web.Response:
 			pass
 		gens.pop(digest, None)
 		return web.json_response({"error": str(e)}, status=500)
-
-
-async def novelai_generate(api: NovelAIAPI, prompt: str, model, preset: ImagePreset, negative_prompt: str, lock: asyncio.Lock, config: dict):
-	"""Generate an image via NovelAI API using the provided lock and retry/backoff settings.
-
-	Returns a tuple (name, data) on success, or (None, None) when NovelAI remains busy after retries.
-	"""
-	max_retries = int(config.get("generation_retries", 5))
-	backoff = float(config.get("generation_backoff", 1.0))
-	attempt = 0
-	generated = False
-	name = None
-	data = None
-
-	async with lock:
-		while attempt < max_retries:
-			try:
-				async for pair in api.high_level.generate_image(prompt, model, preset, negative_prompt=negative_prompt):
-					try:
-						name, data = pair
-					except Exception:
-						name = "image.png"
-						data = pair
-
-					generated = True
-					break
-
-				if generated:
-					break
-
-			except Exception as e:
-				s = str(e)
-				if "429" in s or "Concurrent generation" in s or "concurrent generation" in s.lower():
-					attempt += 1
-					LOGGER.warning("NovelAI busy (attempt %s/%s), retrying in %ss: %s", attempt, max_retries, backoff, s)
-					await asyncio.sleep(backoff)
-					backoff *= 2
-					continue
-				raise
-
-	if not generated:
-		return None, None
-
-	return name, data
 
 
 def read_cached_image(cached_file: Path, want_raw: bool, context: str = None):
@@ -450,6 +400,9 @@ async def on_startup(app: web.Application):
 
 	config = _load_config()
 	app["config"] = config
+
+	# Generation wrapper (lock + retry/backoff) around the NovelAI API
+	app["generator"] = NovelAIGenerator(api, config, lock=app["generate_lock"])
 
 	token = config.get("token") or os.environ.get("NOVELAI_TOKEN")
 	email = os.environ.get("NOVELAI_EMAIL")
