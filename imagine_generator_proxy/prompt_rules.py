@@ -17,10 +17,24 @@ Rule schema:
 
 from __future__ import annotations
 
-RULES_VERSION: int = 1
+RULES_VERSION: int = 2
 
 LEGACY_QUALITY_PREFIX = "score_9, score_8_up, score_7_up, score_6_up, source_anime"
 V45_QUALITY_SUFFIX = "location, very aesthetic, masterpiece, no text"
+
+# Quality-defect vocabulary that belongs in the NEGATIVE prompt. Found leaked
+# into the tail of positive prompts in ~6% of the cached corpus (SillyTavern
+# character cards appending their negative block). Used by the run-detector:
+# a consecutive run of >= 3 of these tags is treated as a leaked negative
+# section and cut, together with any scene suppressions trailing it.
+NEGATIVE_VOCAB = [
+	"deformed", "ugly", "blurry", "lowres", "extra limbs", "mutated hands",
+	"poor anatomy", "bad lighting", "overexposed", "underexposed",
+	"worst quality", "low quality", "jpeg artifacts", "text", "watermark",
+	"signature", "logo", "duplicate", "duplicates", "extra fingers",
+	"emoji", "letters", "writing", "advertisement", "caption", "error",
+	"chat", "discord", "message", "unnatural proportions",
+]
 
 RULES = [
 	# --- stage: safety (runs first, always) ---
@@ -50,6 +64,20 @@ RULES = [
 		"notes": "uniform alone is stripped after the combo check above"},
 
 	# --- stage: cleanup ---
+	# The caller sometimes appends its negative prompt to the positive one
+	# (observed as "negative: ..." / "negative prompt: ..." sections). Everything
+	# after the marker is intended-negative, so cut it. Scene-specific
+	# suppressions after the marker (e.g. "outdoor, sky") are discarded with
+	# it; extracting them into the real negative prompt is a future refinement.
+	{"id": "strip-negative-section", "stage": "cleanup", "severity": "safe",
+		"match": {"type": "regex", "value": r"negative\s+prompt\s*:|negative\s*:", "flags": "i"},
+		"action": {"type": "truncate_at_match"},
+		"notes": "cut literal 'negative:' section appended by the caller"},
+	{"id": "strip-negative-vocab-run", "stage": "cleanup", "severity": "safe",
+		"match": {"type": "always"},
+		"action": {"type": "strip_negvocab_run", "value": NEGATIVE_VOCAB, "run_length": 3},
+		"notes": "cut trailing runs of >= 3 negative-vocabulary tags with no marker"},
+
 	{"id": "dedupe-quality-tags", "stage": "cleanup", "severity": "safe",
 		"match": {"type": "tags", "value": [
 			"score_9", "score_8_up", "score_7_up", "score_6_up", "score_5_up",

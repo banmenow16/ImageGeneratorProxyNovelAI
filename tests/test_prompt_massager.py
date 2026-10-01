@@ -92,6 +92,57 @@ def test_weight_syntax_normalized_for_dedupe(massager):
 	assert len(survivors) == 1
 
 
+# --- negative-prompt leakage cleanup ---
+
+def test_negative_marker_section_is_cut(massager):
+	raw = "girl, red dress, intimate bedroom, negative: deformed, ugly, blurry, lowres, extra limbs"
+	result = massager.massage(raw, "X")
+	tags = tags_of(result.effective)
+	assert "girl" in tags and "red dress" in tags
+	for leaked in ("deformed", "ugly", "blurry", "lowres", "extra limbs"):
+		assert leaked not in tags
+
+
+def test_negative_prompt_marker_variant_is_cut(massager):
+	raw = "girl, red dress, negative prompt: deformed, ugly, blurry"
+	result = massager.massage(raw, "X")
+	tags = tags_of(result.effective)
+	assert "deformed" not in tags and "ugly" not in tags
+	assert "red dress" in tags
+
+
+def test_scene_suppressions_trailing_the_leak_are_cut_too(massager):
+	# "outdoor, sky" after the marker were intended negatives; they must go
+	raw = "girl, negative: deformed, ugly, blurry, lowres, outdoor, sky"
+	result = massager.massage(raw, "X")
+	tags = tags_of(result.effective)
+	assert "outdoor" not in tags and "sky" not in tags
+
+
+def test_bare_negative_vocab_run_is_cut(massager):
+	raw = "girl, red dress, masterpiece, best quality, deformed, ugly, blurry, lowres, extra limbs, outdoor, sky"
+	result = massager.massage(raw, "X")
+	tags = tags_of(result.effective)
+	assert "red dress" in tags
+	for leaked in ("deformed", "ugly", "blurry", "lowres", "outdoor", "sky"):
+		assert leaked not in tags
+
+
+def test_short_negative_run_is_preserved(massager):
+	# only a 2-run: conservative threshold must not fire
+	raw = "girl, ugly, blurry, red dress"
+	result = massager.massage(raw, "X")
+	tags = tags_of(result.effective)
+	assert "ugly" in tags and "blurry" in tags
+
+
+def test_legit_outdoor_sky_without_run_is_preserved(massager):
+	raw = "girl, outdoor, sky, sunset, picnic"
+	result = massager.massage(raw, "X")
+	tags = tags_of(result.effective)
+	assert "outdoor" in tags and "sky" in tags and "sunset" in tags
+
+
 # --- enhance stage ---
 
 def test_quality_prefix_and_suffix_added_when_missing(massager):

@@ -167,6 +167,27 @@ class PromptMassager:
 			tags[:] = [(d, n) for (d, n) in tags if n not in targets]
 			if len(tags) != before:
 				removed.append(rule["id"])
+		elif atype == "truncate_at_match":
+			# Cut everything from the first tag whose text matches the rule's
+			# regex (e.g. a literal "negative:" section head) to the end.
+			flags = re.IGNORECASE if "i" in (spec.get("flags") or "") else 0
+			pattern = re.compile(str(spec.get("value", "")), flags)
+			for idx, (display, _) in enumerate(tags):
+				if pattern.search(display):
+					removed.extend(d for d, _ in tags[idx:])
+					del tags[idx:]
+					break
+		elif atype == "strip_negvocab_run":
+			# Cut from the earliest run of `run_length` consecutive
+			# negative-vocabulary tags to the end (leaked negative section
+			# without a marker). Runs shorter than run_length are preserved.
+			vocab = {_norm(str(v)) for v in (value or [])}
+			run_length = int(action.get("run_length", 3))
+			for idx in range(0, len(tags) - run_length + 1):
+				if all(n in vocab for _, n in tags[idx:idx + run_length]):
+					removed.extend(d for d, _ in tags[idx:])
+					del tags[idx:]
+					break
 		elif atype == "replace":
 			targets = self._spec_tag_values(spec)
 			replacement = [(t, _norm(t)) for t in _split_tags(str(value))]
