@@ -85,10 +85,11 @@ async def request_logging_middleware(request: web.Request, handler):
 async def generate_handler(request: web.Request) -> web.Response:
 	config = request.app.get("config", {})
 	initial_prompt = 'score_9, score_8_up, score_7_up, score_6_up, source_anime'
-	prompt = initial_prompt + ',' + request.query.get("prompt")
-	if not prompt:
+	raw_prompt = request.query.get("prompt")
+	if not raw_prompt:
 		LOGGER.warning("Bad request: /generate is missing the 'prompt' query parameter")
 		return web.json_response({"error": "missing 'prompt' query parameter"}, status=400)
+	prompt = initial_prompt + ',' + raw_prompt
 
 	# Character name (used for namespacing cache). Keep only safe characters.
 	raw_character = request.query.get("character") or "default"
