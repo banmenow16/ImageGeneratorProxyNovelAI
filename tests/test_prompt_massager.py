@@ -183,7 +183,7 @@ def test_safety_still_checkable_when_disabled():
 
 # --- negative prompt builder ---
 
-def test_negative_prompt_is_byte_identical_with_legacy_join():
+def test_legacy_negative_prompt_is_byte_identical_with_historical_join():
 	old_join = ', '.join([
 		'text, watermark, signature, letters, writing, logo, advertisement, caption, error, emoji, chat, discord, message',
 		'deformed, ugly, blurry, lowres, extra limbs, mutated hands, poor anatomy',
@@ -191,12 +191,53 @@ def test_negative_prompt_is_byte_identical_with_legacy_join():
 		'unnatural proportions',
 		'',
 	])
-	assert build_negative_prompt('', {}) == old_join
+	# the bypass path (legacy=True) must reproduce the historical join exactly
+	assert build_negative_prompt('', {}, legacy=True) == old_join
+
+
+def test_massaged_negative_blocks_are_extended():
+	# vision-QC-driven hardening of the hand/limb vocabulary
+	massaged = build_negative_prompt('', {})
+	for term in ('extra arms', 'extra digits', 'fused fingers', 'missing arms'):
+		assert term in massaged
 
 
 def test_negative_prompt_config_overrides_and_query_appends():
 	assert build_negative_prompt('extra', {'negative_prompt': 'custom'}) == 'custom, extra'
 	assert build_negative_prompt('extra', {'negative_prompt': ['a', 'b']}) == 'a, b, extra'
+
+
+def test_negative_builder_extra_negations_between_blocks_and_query():
+	out = build_negative_prompt('qn', {}, extra=['multiple girls', 'multiple boys'])
+	assert 'multiple girls, multiple boys, qn' in out
+
+
+# --- v3 enhance rules (vision-QC driven) ---
+
+def test_large_chest_tags_kept_and_stabilized(massager):
+	raw = "huge breasts, red dress, bedroom"
+	result = massager.massage(raw, "X")
+	tags = tags_of(result.effective)
+	assert "huge breasts" in tags  # size tag untouched (user preference)
+	assert "detailed anatomy" in tags
+	assert "anatomically correct proportions" in tags
+
+
+def test_no_chest_tags_no_stabilizers(massager):
+	result = massager.massage("red dress, bedroom", "X")
+	tags = tags_of(result.effective)
+	assert "anatomically correct proportions" not in tags
+
+
+def test_solo_guard_adds_person_negations(massager):
+	result = massager.massage("solo, one girl, red dress", "X")
+	assert "multiple girls" in result.negative_additions
+	assert "multiple boys" in result.negative_additions
+
+
+def test_no_solo_no_person_negations(massager):
+	result = massager.massage("two girls on bed", "X")
+	assert result.negative_additions == []
 
 
 # --- overlay loading ---

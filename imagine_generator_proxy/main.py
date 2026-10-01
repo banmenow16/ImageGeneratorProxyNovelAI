@@ -159,7 +159,10 @@ async def generate_handler(request: web.Request) -> web.Response:
 
 	prompt = result.effective
 	version = result.version
-	negative_prompt = build_negative_prompt(q_negative, config)
+	# legacy=True keeps the historical negative blocks (and thus the legacy
+	# digest) byte-identical on the bypass path
+	negative_prompt = build_negative_prompt(q_negative, config, extra=result.negative_additions,
+		legacy=(version is None))
 
 	# Build cache key from character, prompt, negative_prompt and model name.
 	# version None keeps the historical formula so bypass requests still hit

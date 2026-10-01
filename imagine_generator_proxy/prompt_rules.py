@@ -17,7 +17,21 @@ Rule schema:
 
 from __future__ import annotations
 
-RULES_VERSION: int = 2
+RULES_VERSION: int = 3
+
+# Large-chest size tags (kept verbatim — user preference). Vision QC found
+# these correlate with melted torso silhouettes and lost/untraceable arms;
+# the rule adds stability tags instead of touching the size tags.
+LARGE_CHEST_TAGS = [
+	"massive breasts", "huge breasts", "enormous breasts", "colossal breasts",
+	"gigantic breasts", "giant breasts", "hyper breasts", "big breasts",
+	"large breasts", "huge chest", "massive chest", "massive heavy breasts",
+	"enormous breasts exposed",
+]
+
+# Solo indicators: vision QC saw "solo" prompts gain background figures the
+# standard negative blocks don't suppress (they only cover "multiple girls").
+SOLO_TAGS = ["solo", "one girl", "one boy", "solo focus", "1girl", "1boy"]
 
 LEGACY_QUALITY_PREFIX = "score_9, score_8_up, score_7_up, score_6_up, source_anime"
 V45_QUALITY_SUFFIX = "location, very aesthetic, masterpiece, no text"
@@ -96,4 +110,12 @@ RULES = [
 		"match": {"type": "always"},
 		"action": {"type": "ensure_append", "value": V45_QUALITY_SUFFIX},
 		"notes": "replaces the library quality_toggle, which is disabled when massage is on"},
+	{"id": "stabilize-large-chest", "stage": "enhance", "severity": "safe",
+		"match": {"type": "tags", "value": LARGE_CHEST_TAGS},
+		"action": {"type": "ensure_append", "value": "detailed anatomy, anatomically correct proportions"},
+		"notes": "large-chest prompts trend to melted torsos; stabilize without touching the size tags"},
+	{"id": "solo-guard", "stage": "enhance", "severity": "safe",
+		"match": {"type": "tags", "value": SOLO_TAGS},
+		"action": {"type": "negate", "value": "multiple girls, multiple boys"},
+		"notes": "solo prompts gain background figures; suppress extra persons in the negative prompt"},
 ]

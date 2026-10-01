@@ -38,27 +38,47 @@ class MassagedPrompt:
 	blocked_rule: Optional[str] = None
 	applied_rules: List[str] = field(default_factory=list)
 	removed: List[str] = field(default_factory=list)
+	negative_additions: List[str] = field(default_factory=list)
 
 
-DEFAULT_NEGATIVE_BLOCKS = [
+# The historical blocks, frozen verbatim: the massage-bypass path must keep
+# producing byte-identical negatives (and therefore legacy digests) so it
+# still hits the pre-massager cache. Never edit this list.
+LEGACY_NEGATIVE_BLOCKS = [
 	"text, watermark, signature, letters, writing, logo, advertisement, caption, error, emoji, chat, discord, message",
 	"deformed, ugly, blurry, lowres, extra limbs, mutated hands, poor anatomy",
 	"bad lighting, overexposed, underexposed, worst quality, low quality, jpeg artifacts, ugly, duplicate",
 	"unnatural proportions",
 ]
 
+# Blocks for the massaged path. Vision QC of the cache showed the legacy
+# hand/limb vocabulary was too weak (fused fingers and extra arms still
+# render). NOTE: any change here changes the effective negative prompt and
+# therefore the massaged digest — bump prompt_rules.RULES_VERSION alongside.
+DEFAULT_NEGATIVE_BLOCKS = [
+	"text, watermark, signature, letters, writing, logo, advertisement, caption, error, emoji, chat, discord, message",
+	"deformed, ugly, blurry, lowres, extra limbs, extra arms, extra digits, fused fingers, missing arms, mutated hands, poor anatomy",
+	"bad lighting, overexposed, underexposed, worst quality, low quality, jpeg artifacts, ugly, duplicate",
+	"unnatural proportions",
+]
 
-def build_negative_prompt(query_negative: str, config: dict) -> str:
+
+def build_negative_prompt(query_negative: str, config: dict, extra: Optional[List[str]] = None,
+		legacy: bool = False) -> str:
 	"""Build the negative prompt.
 
-	Config `negative_prompt` (str or list of str) replaces the built-in
-	blocks; the query negative is always appended — including when empty, to
-	stay byte-identical with the historical join (trailing ", ").
+	legacy=True freezes the historical blocks so the bypass path stays
+	byte-identical with pre-massager generations (trailing ", " included).
+	Config `negative_prompt` (str or list of str) overrides the built-in
+	blocks on the massaged path only; rule-generated `extra` negations are
+	appended after the blocks, before the query negative.
 	"""
-	blocks = config.get("negative_prompt") or DEFAULT_NEGATIVE_BLOCKS
+	blocks = config.get("negative_prompt")
+	if blocks is None:
+		blocks = LEGACY_NEGATIVE_BLOCKS if legacy else DEFAULT_NEGATIVE_BLOCKS
 	if isinstance(blocks, str):
 		blocks = [blocks]
-	return ", ".join(list(blocks) + [query_negative])
+	return ", ".join(list(blocks) + list(extra or []) + [query_negative])
 
 
 def legacy_assemble(raw_prompt: str) -> str:
@@ -155,7 +175,8 @@ class PromptMassager:
 
 	# --- actions ---
 
-	def _apply(self, rule: dict, tags: List[Tuple[str, str]], applied: List[str], removed: List[str]) -> None:
+	def _apply(self, rule: dict, tags: List[Tuple[str, str]], applied: List[str],
+			removed: List[str], negations: List[str]) -> None:
 		action = rule.get("action") or {}
 		spec = rule.get("match") or {}
 		atype = action.get("type")
@@ -222,6 +243,13 @@ class PromptMassager:
 					seen.add(norm)
 				new_tags.append((display, norm))
 			tags[:] = new_tags
+		elif atype == "negate":
+			# Add prompt-specific negations (e.g. "multiple boys" for solo
+			# prompts) to the negative prompt via MassagedPrompt.negative_additions.
+			for tag in _split_tags(str(value)):
+				if tag not in negations:
+					negations.append(tag)
+			applied.append(rule["id"])
 		elif atype == "block":
 			# Block severity is handled by the safety stage; nothing to do here.
 			pass
@@ -239,12 +267,14 @@ class PromptMassager:
 	# --- pipeline ---
 
 	def _run_stage(
-		self, stage: str, tags: List[Tuple[str, str]], applied: List[str], removed: List[str]
+		self, stage: str, tags: List[Tuple[str, str]], applied: List[str], removed: List[str],
+		negations: Optional[List[str]] = None,
 	) -> Optional[Tuple[str, str]]:
 		"""Run the rules of one stage over the tag list (mutated in place).
 
 		Returns (rule_id, reason) as soon as an unsafe rule matches.
 		"""
+		negations = negations if negations is not None else []
 		for rule in self.rules:
 			if rule.get("stage") != stage:
 				continue
@@ -256,7 +286,7 @@ class PromptMassager:
 				continue
 			if rule.get("severity") == "unsafe":
 				return (rule.get("id", "unknown"), rule.get("notes") or "blocked by safety rule")
-			self._apply(rule, tags, applied, removed)
+			self._apply(rule, tags, applied, removed, negations)
 		return None
 
 	def check_safety(self, raw_prompt: str) -> Optional[Tuple[str, str]]:
@@ -280,6 +310,7 @@ class PromptMassager:
 		tags = [(t, _norm(t)) for t in _split_tags(raw_prompt)]
 		applied: List[str] = []
 		removed: List[str] = []
+		negations: List[str] = []
 
 		if self.safety_enabled:
 			blocked = self._run_stage("safety", tags, applied, removed)
@@ -290,11 +321,11 @@ class PromptMassager:
 					applied_rules=applied, removed=removed,
 				)
 
-		self._run_stage("cleanup", tags, applied, removed)
-		self._run_stage("enhance", tags, applied, removed)
+		self._run_stage("cleanup", tags, applied, removed, negations)
+		self._run_stage("enhance", tags, applied, removed, negations)
 
 		effective = ", ".join(display for display, _ in tags)
 		return MassagedPrompt(
 			original=raw_prompt, effective=effective, version=self.version,
-			applied_rules=applied, removed=removed,
+			applied_rules=applied, removed=removed, negative_additions=negations,
 		)
