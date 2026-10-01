@@ -18,6 +18,7 @@ dist/
 .idea/
 
 # Local config and cache
+imagine_generator_proxy/config.yaml
 imagine_generator_proxy/cache/
 imagine_generator_proxy/pyvenv.cfg
 *.log
@@ -33,3 +34,4 @@ pip-selfcheck.json
 **/Lib/
 **/Scripts/
 **/bin/
+imagine_generator_proxy/images.db

@@ -3,6 +3,12 @@ import base64
 import asyncio
 import hashlib
 import re
+import sqlite3
+import logging
+from logging.handlers import RotatingFileHandler
+import sys
+import time
+from datetime import datetime
 from pathlib import Path
 import traceback
 try:
@@ -15,13 +21,73 @@ from aiohttp.resolver import AsyncResolver
 from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel, ImagePreset, ImageGenerationType
 
+LOGGER = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+	if logging.getLogger().handlers:
+		return
+
+	log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+	log_dir = Path(__file__).parent / "logs"
+	log_dir.mkdir(parents=True, exist_ok=True)
+	formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+	console_handler = logging.StreamHandler(sys.stdout)
+	console_handler.setFormatter(formatter)
+	file_handler = RotatingFileHandler(
+		log_dir / "server.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+	)
+	file_handler.setFormatter(formatter)
+
+	root_logger = logging.getLogger()
+	root_logger.setLevel(getattr(logging, log_level, logging.INFO))
+	root_logger.addHandler(console_handler)
+	root_logger.addHandler(file_handler)
+
+
+@web.middleware
+async def request_logging_middleware(request: web.Request, handler):
+	started = time.perf_counter()
+	try:
+		response = await handler(request)
+	except Exception:
+		elapsed = time.perf_counter() - started
+		LOGGER.exception(
+			"Unhandled exception while serving %s %s (%.3fs)",
+			request.method,
+			request.path,
+			elapsed,
+		)
+		raise
+
+	elapsed = time.perf_counter() - started
+	if response.status >= 400:
+		LOGGER.warning(
+			"HTTP %s response for %s %s from %s (%.3fs)",
+			response.status,
+			request.method,
+			request.path,
+			request.remote or "unknown client",
+			elapsed,
+		)
+	else:
+		LOGGER.info(
+			"HTTP %s %s -> %s (%.3fs)",
+			request.method,
+			request.path,
+			response.status,
+			elapsed,
+		)
+	return response
+
 
 async def generate_handler(request: web.Request) -> web.Response:
-	print("Received /generate request for " + request.query.get("prompt"))
 	config = request.app.get("config", {})
 	initial_prompt = 'score_9, score_8_up, score_7_up, score_6_up, source_anime'
 	prompt = initial_prompt + ',' + request.query.get("prompt")
 	if not prompt:
+		LOGGER.warning("Bad request: /generate is missing the 'prompt' query parameter")
 		return web.json_response({"error": "missing 'prompt' query parameter"}, status=400)
 
 	# Character name (used for namespacing cache). Keep only safe characters.
@@ -64,7 +130,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 		try:
 			cached_file.unlink()
 		except Exception as e:
-			print("Failed to remove cached image for force override:", e)
+			LOGGER.exception("Failed to remove cached image for force override")
 
 	# Per-key generation events to coordinate concurrent requests for same prompt
 	gens: dict = request.app.setdefault("generations", {})
@@ -95,6 +161,8 @@ async def generate_handler(request: web.Request) -> web.Response:
 		# fallback: create one (should normally be created on startup)
 		lock = asyncio.Lock()
 
+	LOGGER.info("Sending request to NovelAI. Queue size: %s", len(gens))
+
 	try:
 		name, data = await novelai_generate(api, prompt, model, preset, negative_prompt, lock, config)
 
@@ -109,14 +177,24 @@ async def generate_handler(request: web.Request) -> web.Response:
 
 		# Write cache outside the lock
 		if isinstance(data, (bytes, bytearray)):
-			return write_cache_and_prepare_response(data, char_dir, cached_file, want_raw, gens, digest, name)
+			resp = write_cache_and_prepare_response(data, char_dir, cached_file, want_raw, gens, digest, name)
+			# Store in database
+			conn = sqlite3.connect(str(request.app["db_path"]))
+			try:
+				conn.execute('INSERT OR IGNORE INTO images (character, digest, prompt, negative_prompt, model) VALUES (?, ?, ?, ?, ?)',
+					(character, digest, prompt, negative_prompt, str(model)))
+				conn.commit()
+			except Exception as e:
+				LOGGER.exception("Failed to store generated image in database")
+			finally:
+				conn.close()
+			return resp
 
 		# If data is not binary, return it as text in JSON
 		return prepare_nonbinary_response(name, data, gens, digest)
 	except Exception as e:
 		# log error server-side for easier debugging
-		print("/generate handler error:", repr(e))
-		traceback.print_exc()
+		LOGGER.exception("/generate handler error")
 		try:
 			gens[digest].set()
 		except Exception:
@@ -126,47 +204,47 @@ async def generate_handler(request: web.Request) -> web.Response:
 
 
 async def novelai_generate(api: NovelAIAPI, prompt: str, model, preset: ImagePreset, negative_prompt: str, lock: asyncio.Lock, config: dict):
-    """Generate an image via NovelAI API using the provided lock and retry/backoff settings.
+	"""Generate an image via NovelAI API using the provided lock and retry/backoff settings.
 
-    Returns a tuple (name, data) on success, or (None, None) when NovelAI remains busy after retries.
-    """
-    max_retries = int(config.get("generation_retries", 5))
-    backoff = float(config.get("generation_backoff", 1.0))
-    attempt = 0
-    generated = False
-    name = None
-    data = None
+	Returns a tuple (name, data) on success, or (None, None) when NovelAI remains busy after retries.
+	"""
+	max_retries = int(config.get("generation_retries", 5))
+	backoff = float(config.get("generation_backoff", 1.0))
+	attempt = 0
+	generated = False
+	name = None
+	data = None
 
-    async with lock:
-        while attempt < max_retries:
-            try:
-                async for pair in api.high_level.generate_image(prompt, model, preset, negative_prompt=negative_prompt):
-                    try:
-                        name, data = pair
-                    except Exception:
-                        name = "image.png"
-                        data = pair
+	async with lock:
+		while attempt < max_retries:
+			try:
+				async for pair in api.high_level.generate_image(prompt, model, preset, negative_prompt=negative_prompt):
+					try:
+						name, data = pair
+					except Exception:
+						name = "image.png"
+						data = pair
 
-                    generated = True
-                    break
+					generated = True
+					break
 
-                if generated:
-                    break
+				if generated:
+					break
 
-            except Exception as e:
-                s = str(e)
-                if "429" in s or "Concurrent generation" in s or "concurrent generation" in s.lower():
-                    attempt += 1
-                    print(f"NovelAI busy (attempt {attempt}/{max_retries}), retrying in {backoff}s:", s)
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
-                    continue
-                raise
+			except Exception as e:
+				s = str(e)
+				if "429" in s or "Concurrent generation" in s or "concurrent generation" in s.lower():
+					attempt += 1
+					LOGGER.warning("NovelAI busy (attempt %s/%s), retrying in %ss: %s", attempt, max_retries, backoff, s)
+					await asyncio.sleep(backoff)
+					backoff *= 2
+					continue
+				raise
 
-    if not generated:
-        return None, None
+	if not generated:
+		return None, None
 
-    return name, data
+	return name, data
 
 
 def read_cached_image(cached_file: Path, want_raw: bool, context: str = None):
@@ -186,9 +264,9 @@ def read_cached_image(cached_file: Path, want_raw: bool, context: str = None):
 		return web.json_response({"name": cached_file.name, "image_b64": img_b64, "cached": True})
 	except Exception as e:
 		if context:
-			print(f"Failed to read cached image ({context}):", e)
+			LOGGER.exception("Failed to read cached image (%s)", context)
 		else:
-			print("Failed to read cached image:", e)
+			LOGGER.exception("Failed to read cached image")
 		return None
 
 
@@ -197,7 +275,7 @@ def write_cache_and_prepare_response(data, char_dir: Path, cached_file: Path, wa
 		char_dir.mkdir(parents=True, exist_ok=True)
 		cached_file.write_bytes(bytes(data))
 	except Exception as e:
-		print("Failed to write cache file:", e)
+		LOGGER.exception("Failed to write cache file")
 
 	# signal waiting requests before returning
 	try:
@@ -222,6 +300,79 @@ def prepare_nonbinary_response(name: str, data, gens: dict, digest: str):
 	return web.json_response({"name": name, "image": str(data)})
 
 
+async def gallery_handler(request: web.Request) -> web.Response:
+	cache_dir: Path = request.app.get("cache_dir")
+	if cache_dir is None:
+		return web.Response(text="Cache directory unavailable", status=500)
+	folders = sorted([d for d in cache_dir.iterdir() if d.is_dir()], key=lambda d: d.name)
+	html = "<html><head><title>Image Cache Gallery</title></head><body><h1>Image Cache Folders</h1><ul>"
+	for folder in folders:
+		count = sum(1 for _ in folder.glob('*.png'))
+		html += f'<li><a href="/folder/{folder.name}">{folder.name}</a> ({count})</li>'
+	if not folders:
+		html += "<li>No cached folders found.</li>"
+	html += "</ul></body></html>"
+	return web.Response(text=html, content_type="text/html")
+
+
+async def folder_handler(request: web.Request) -> web.Response:
+	character = request.match_info['character']
+	cache_dir: Path = request.app.get("cache_dir")
+	if cache_dir is None:
+		return web.Response(text="Cache directory unavailable", status=500)
+	char_dir = cache_dir / character
+	if not char_dir.exists() or not char_dir.is_dir():
+		return web.Response(text="Folder not found", status=404)
+
+	# Load prompt metadata from the database if available
+	metadata = {}
+	conn = sqlite3.connect(str(request.app["db_path"]))
+	try:
+		cursor = conn.cursor()
+		cursor.execute('SELECT digest, prompt, first_appearance FROM images WHERE character = ?', (character,))
+		for digest, prompt, first_appearance in cursor.fetchall():
+			metadata[digest] = (prompt, first_appearance)
+	except Exception as e:
+		print("Failed to query database:", e)
+	finally:
+		conn.close()
+
+	images = []
+	for image_path in char_dir.glob('*.png'):
+		digest = image_path.stem
+		prompt, first_appearance = metadata.get(digest, (None, None))
+		mtime = datetime.fromtimestamp(image_path.stat().st_mtime).isoformat(sep=' ', timespec='seconds')
+		date_label = first_appearance or mtime
+		images.append((image_path.name, prompt, date_label, image_path.stat().st_mtime))
+
+	images.sort(key=lambda item: item[3], reverse=True)
+
+	html = f"""<html><head><title>{character} Images</title><style>
+		body {{ font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f0f0f0; }}
+		h1 {{ margin-top: 0; }}
+		.page-header {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }}
+		.page-header a {{ text-decoration: none; color: #0066cc; }}
+		.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 320px)); gap: 16px; justify-content: center; }}
+		.card {{ width: 100%; max-width: 320px; background: #fff; border: 1px solid #ddd; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.06); }}
+		.card img {{ width: 100%; height: auto; display: block; }}
+		.card-body {{ padding: 12px; }}
+		.card-body p {{ margin: 0 0 8px; line-height: 1.4; word-break: break-word; }}
+		.card-body .date {{ color: #666; font-size: 0.9em; }}
+	</style></head><body><div class="page-header"><h1>{character} Images</h1><a href='/'>Back to Folders</a></div>"""
+	if not images:
+		html += "<p>No images found in this folder.</p>"
+	else:
+		html += '<div class="grid">'
+		for filename, prompt, date_label, _ in images:
+			html += f'<div class="card"><img src="/cache/{character}/{filename}" alt="{filename}"><div class="card-body">'
+			if prompt:
+				html += f'<p>{prompt}</p>'
+			html += f'<p class="date">{date_label}</p></div></div>'
+		html += '</div>'
+	html += "</body></html>"
+	return web.Response(text=html, content_type="text/html")
+
+
 async def on_startup(app: web.Application):
 	# Use a custom DNS resolver pointing to the requested internal DNS server
 	session = ClientSession()
@@ -243,6 +394,21 @@ async def on_startup(app: web.Application):
 	except Exception as e:
 		print("Failed to create cache directory:", e)
 	app["cache_dir"] = cache_dir
+
+	# Initialize database
+	db_path = Path(__file__).parent / "images.db"
+	conn = sqlite3.connect(str(db_path))
+	conn.execute('''CREATE TABLE IF NOT EXISTS images (
+		id INTEGER PRIMARY KEY,
+		character TEXT,
+		digest TEXT UNIQUE,
+		prompt TEXT,
+		negative_prompt TEXT,
+		model TEXT,
+		first_appearance TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)''')
+	conn.close()
+	app["db_path"] = db_path
 
 	# Load YAML config (if present) and authenticate
 	def _load_config() -> dict:
@@ -311,6 +477,9 @@ async def on_cleanup(app: web.Application):
 def create_app() -> web.Application:
 	app = web.Application()
 	app.router.add_get("/generate", generate_handler)
+	app.router.add_get("/", gallery_handler)
+	app.router.add_get("/folder/{character}", folder_handler)
+	app.router.add_static('/cache', str(Path(__file__).parent / "cache"))
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)
 	return app

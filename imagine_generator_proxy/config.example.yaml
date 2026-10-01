@@ -1,0 +1,10 @@
+# Copy this file to config.yaml and fill in your token.
+# config.yaml is gitignored so your token is never committed.
+#
+# A token can be obtained from your NovelAI account settings, or set the
+# NOVELAI_TOKEN environment variable instead.
+token: "pst-YOUR_TOKEN_HERE"
+
+# Optional generation settings (defaults shown)
+# generation_retries: 5
+# generation_backoff: 1.0
