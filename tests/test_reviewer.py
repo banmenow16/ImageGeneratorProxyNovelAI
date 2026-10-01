@@ -220,7 +220,7 @@ def test_good_verdict_has_no_fix():
 
 def test_history_injected_when_available():
 	import sqlite3, tempfile, os
-	from imagine_generator_proxy.main import ensure_db_schema
+	from imagine_generator_proxy.storage import ensure_db_schema
 
 	fd, path = tempfile.mkstemp(suffix=".db")
 	os.close(fd)

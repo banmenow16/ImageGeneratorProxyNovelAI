@@ -1,30 +1,26 @@
 import os
 import base64
 import asyncio
-import hashlib
 import re
 import sqlite3
 import logging
 from logging.handlers import RotatingFileHandler
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
-import traceback
 from typing import Optional
 from urllib.parse import quote
 try:
 	import yaml
 except Exception:
 	yaml = None
-from aiohttp import web, ClientSession, TCPConnector
-from aiohttp.resolver import AsyncResolver
+from aiohttp import web, ClientSession
 
 from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel
 
-from imagine_generator_proxy import experiment
-from imagine_generator_proxy.generation import GeneratedImage, NovelAIGenerator, ImageGenerationType
+from imagine_generator_proxy import experiment, gallery
+from imagine_generator_proxy.generation import NovelAIGenerator, ImageGenerationType
 from imagine_generator_proxy.openrouter_reviewer import OpenRouterReviewer
 from imagine_generator_proxy.prompt_massager import (
 	MassagedPrompt,
@@ -33,100 +29,14 @@ from imagine_generator_proxy.prompt_massager import (
 	legacy_assemble,
 )
 from imagine_generator_proxy.reviewer import NoopReviewer
+from imagine_generator_proxy.storage import (
+	compute_digest,
+	ensure_db_schema,
+	log_review_outcome,
+	record_generated_image,
+)
 
 LOGGER = logging.getLogger(__name__)
-
-
-def compute_digest(character: str, prompt: str, negative_prompt: str, model, massager_version: Optional[int]) -> str:
-	"""Cache digest for a generation request.
-
-	massager_version None keeps the historical formula byte-identical so
-	bypass requests keep hitting the pre-massager cache. Massaged prompts
-	are namespaced with a "pmv<N>" prefix: bumping the rule version
-	regenerates, an unchanged version keeps everything cached.
-	"""
-	parts = [character, prompt, negative_prompt, str(model)]
-	if massager_version is not None:
-		parts.insert(0, "pmv%d" % massager_version)
-	return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
-
-
-def ensure_db_schema(conn: sqlite3.Connection) -> None:
-	"""Additive migration for columns the massager needs (idempotent)."""
-	cols = {row[1] for row in conn.execute("PRAGMA table_info(images)")}
-	if cols:  # images table exists (created by on_startup just before this)
-		if "raw_prompt" not in cols:
-			conn.execute("ALTER TABLE images ADD COLUMN raw_prompt TEXT")
-		if "massager_version" not in cols:
-			conn.execute("ALTER TABLE images ADD COLUMN massager_version INTEGER")
-	# Review memory: every vision-review outcome (approved and rejected) is
-	# recorded so future hint retrieval has history to learn from.
-	conn.execute('''CREATE TABLE IF NOT EXISTS reviews (
-		id INTEGER PRIMARY KEY,
-		digest TEXT,
-		character TEXT,
-		approved INTEGER,
-		category TEXT,
-		notes TEXT,
-		attempt INTEGER DEFAULT 0,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	)''')
-	review_cols = {row[1] for row in conn.execute("PRAGMA table_info(reviews)")}
-	if "attempt" not in review_cols:
-		conn.execute("ALTER TABLE reviews ADD COLUMN attempt INTEGER DEFAULT 0")
-	if "tags" not in review_cols:
-		conn.execute("ALTER TABLE reviews ADD COLUMN tags TEXT")
-	# Experiment workbench: provenance for /experiment runs (raw baseline +
-	# massaged review chain), every attempt stored and the accepted one
-	# flagged final.
-	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_runs (
-		id INTEGER PRIMARY KEY,
-		character TEXT,
-		raw_prompt TEXT,
-		raw_negative TEXT,
-		effective_prompt TEXT,
-		effective_negative TEXT,
-		massager_version INTEGER,
-		applied_rules TEXT,
-		removed_tags TEXT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	)''')
-	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_images (
-		id INTEGER PRIMARY KEY,
-		run_id INTEGER,
-		variant TEXT,
-		prompt_used TEXT,
-		negative_used TEXT,
-		image_path TEXT,
-		approved INTEGER,
-		category TEXT,
-		notes TEXT,
-		fix_applied TEXT,
-		is_final INTEGER DEFAULT 0,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	)''')
-	conn.commit()
-
-
-def log_review_outcome(db_path, digest: str, character: str, verdict, attempt: int = 0,
-		tags: str = "") -> None:
-	"""Persist a review outcome (best effort — never breaks the request)."""
-	if not db_path:
-		return
-	try:
-		conn = sqlite3.connect(str(db_path))
-		try:
-			conn.execute(
-				"INSERT INTO reviews (digest, character, approved, category, notes, attempt, tags)"
-				" VALUES (?, ?, ?, ?, ?, ?, ?)",
-				(digest, character, 1 if verdict.approved else 0, verdict.category,
-					(verdict.notes or "")[-1000:], attempt, tags[-2000:]),
-			)
-			conn.commit()
-		finally:
-			conn.close()
-	except Exception:
-		LOGGER.exception("Failed to log review outcome")
 
 
 def configure_logging() -> None:
@@ -348,17 +258,8 @@ async def generate_handler(request: web.Request) -> web.Response:
 		if isinstance(image.data, (bytes, bytearray)):
 			resp = write_cache_and_prepare_response(image.data, char_dir, cached_file, want_raw, gens, digest, image.name,
 				effective_prompt=prompt, massager_version=version)
-			# Store in database
-			conn = sqlite3.connect(str(request.app["db_path"]))
-			try:
-				conn.execute('INSERT OR IGNORE INTO images (character, digest, prompt, negative_prompt, model, raw_prompt, massager_version)'
-					' VALUES (?, ?, ?, ?, ?, ?, ?)',
-					(character, digest, prompt, negative_prompt, str(model), raw_prompt, version))
-				conn.commit()
-			except Exception as e:
-				LOGGER.exception("Failed to store generated image in database")
-			finally:
-				conn.close()
+			record_generated_image(request.app["db_path"], character, digest, prompt,
+				negative_prompt, str(model), raw_prompt, version)
 			return resp
 
 		# If data is not binary, return it as text in JSON
@@ -415,7 +316,7 @@ def write_cache_and_prepare_response(data, char_dir: Path, cached_file: Path, wa
 	try:
 		char_dir.mkdir(parents=True, exist_ok=True)
 		cached_file.write_bytes(bytes(data))
-	except Exception as e:
+	except Exception:
 		LOGGER.exception("Failed to write cache file")
 
 	# signal waiting requests before returning
@@ -446,77 +347,42 @@ def prepare_nonbinary_response(name: str, data, gens: dict, digest: str):
 	return web.json_response({"name": name, "image": str(data)})
 
 
-async def gallery_handler(request: web.Request) -> web.Response:
-	cache_dir: Path = request.app.get("cache_dir")
-	if cache_dir is None:
-		return web.Response(text="Cache directory unavailable", status=500)
-	folders = sorted([d for d in cache_dir.iterdir() if d.is_dir()], key=lambda d: d.name)
-	html = "<html><head><title>Image Cache Gallery</title></head><body><h1>Image Cache Folders</h1><ul>"
-	for folder in folders:
-		count = sum(1 for _ in folder.glob('*.png'))
-		html += f'<li><a href="/folder/{folder.name}">{folder.name}</a> ({count})</li>'
-	if not folders:
-		html += "<li>No cached folders found.</li>"
-	html += "</ul></body></html>"
-	return web.Response(text=html, content_type="text/html")
+def load_config() -> dict:
+	"""Load config.yaml next to the package (PyYAML, with a flat key:value
+	fallback parser when PyYAML is unavailable)."""
+	cfg_path = Path(__file__).parent / "config.yaml"
+	if not cfg_path.exists():
+		return {}
 
-
-async def folder_handler(request: web.Request) -> web.Response:
-	character = request.match_info['character']
-	cache_dir: Path = request.app.get("cache_dir")
-	if cache_dir is None:
-		return web.Response(text="Cache directory unavailable", status=500)
-	char_dir = cache_dir / character
-	if not char_dir.exists() or not char_dir.is_dir():
-		return web.Response(text="Folder not found", status=404)
-
-	# Load prompt metadata from the database if available
-	metadata = {}
-	conn = sqlite3.connect(str(request.app["db_path"]))
 	try:
-		cursor = conn.cursor()
-		cursor.execute('SELECT digest, prompt, first_appearance FROM images WHERE character = ?', (character,))
-		for digest, prompt, first_appearance in cursor.fetchall():
-			metadata[digest] = (prompt, first_appearance)
-	except Exception as e:
-		print("Failed to query database:", e)
-	finally:
-		conn.close()
+		text = cfg_path.read_text(encoding="utf-8")
+	except Exception:
+		LOGGER.exception("Failed to read config.yaml")
+		return {}
 
-	images = []
-	for image_path in char_dir.glob('*.png'):
-		digest = image_path.stem
-		prompt, first_appearance = metadata.get(digest, (None, None))
-		mtime = datetime.fromtimestamp(image_path.stat().st_mtime).isoformat(sep=' ', timespec='seconds')
-		date_label = first_appearance or mtime
-		images.append((image_path.name, prompt, date_label, image_path.stat().st_mtime))
+	if yaml:
+		try:
+			return yaml.safe_load(text) or {}
+		except Exception:
+			LOGGER.exception("Failed to parse config.yaml with PyYAML")
+			return {}
 
-	images.sort(key=lambda item: item[3], reverse=True)
-
-	html = f"""<html><head><title>{character} Images</title><style>
-		body {{ font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f0f0f0; }}
-		h1 {{ margin-top: 0; }}
-		.page-header {{ display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }}
-		.page-header a {{ text-decoration: none; color: #0066cc; }}
-		.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 320px)); gap: 16px; justify-content: center; }}
-		.card {{ width: 100%; max-width: 320px; background: #fff; border: 1px solid #ddd; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.06); }}
-		.card img {{ width: 100%; height: auto; display: block; }}
-		.card-body {{ padding: 12px; }}
-		.card-body p {{ margin: 0 0 8px; line-height: 1.4; word-break: break-word; }}
-		.card-body .date {{ color: #666; font-size: 0.9em; }}
-	</style></head><body><div class="page-header"><h1>{character} Images</h1><a href='/'>Back to Folders</a></div>"""
-	if not images:
-		html += "<p>No images found in this folder.</p>"
-	else:
-		html += '<div class="grid">'
-		for filename, prompt, date_label, _ in images:
-			html += f'<div class="card"><img src="/cache/{character}/{filename}" alt="{filename}"><div class="card-body">'
-			if prompt:
-				html += f'<p>{prompt}</p>'
-			html += f'<p class="date">{date_label}</p></div></div>'
-		html += '</div>'
-	html += "</body></html>"
-	return web.Response(text=html, content_type="text/html")
+	# Fallback simple parser for key: value pairs when PyYAML is not installed
+	cfg = {}
+	for line in text.splitlines():
+		line = line.strip()
+		if not line or line.startswith("#"):
+			continue
+		if ":" not in line:
+			continue
+		k, v = line.split(":", 1)
+		k = k.strip()
+		v = v.strip()
+		if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+			v = v[1:-1]
+		cfg[k] = v
+	LOGGER.warning("PyYAML not installed — using simple config parser")
+	return cfg
 
 
 async def on_startup(app: web.Application):
@@ -537,8 +403,8 @@ async def on_startup(app: web.Application):
 	cache_dir = Path(__file__).parent / "cache"
 	try:
 		cache_dir.mkdir(parents=True, exist_ok=True)
-	except Exception as e:
-		print("Failed to create cache directory:", e)
+	except Exception:
+		LOGGER.exception("Failed to create cache directory")
 	app["cache_dir"] = cache_dir
 
 	# Initialize database
@@ -558,43 +424,7 @@ async def on_startup(app: web.Application):
 	app["db_path"] = db_path
 
 	# Load YAML config (if present) and authenticate
-	def _load_config() -> dict:
-		cfg_path = Path(__file__).parent / "config.yaml"
-		if not cfg_path.exists():
-			return {}
-
-		try:
-			with cfg_path.open("r", encoding="utf-8") as f:
-				text = f.read()
-		except Exception as e:
-			print("Failed to read config.yaml:", e)
-			return {}
-
-		if yaml:
-			try:
-				return yaml.safe_load(text) or {}
-			except Exception as e:
-				print("Failed to parse config.yaml with PyYAML:", e)
-				return {}
-
-		# Fallback simple parser for key: value pairs when PyYAML is not installed
-		cfg = {}
-		for line in text.splitlines():
-			line = line.strip()
-			if not line or line.startswith("#"):
-				continue
-			if ":" not in line:
-				continue
-			k, v = line.split(":", 1)
-			k = k.strip()
-			v = v.strip()
-			if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-				v = v[1:-1]
-			cfg[k] = v
-		print("PyYAML not installed — using simple config parser. To remove this message, install PyYAML.")
-		return cfg
-
-	config = _load_config()
+	config = load_config()
 	app["config"] = config
 
 	# Prompt massager (safety filter + cleanup + enhance rules)
@@ -621,15 +451,13 @@ async def on_startup(app: web.Application):
 	if token:
 		try:
 			await api.high_level.login_with_token(token)
-		except Exception as e:
-			print("Failed to login with token:", repr(e))
-			traceback.print_exc()
+		except Exception:
+			LOGGER.exception("Failed to login with token")
 	elif email and password:
 		try:
 			await api.high_level.login(email, password)
-		except Exception as e:
-			print("Failed to login with email/password:", repr(e))
-			traceback.print_exc()
+		except Exception:
+			LOGGER.exception("Failed to login with email/password")
 
 
 async def on_cleanup(app: web.Application):
@@ -641,8 +469,8 @@ async def on_cleanup(app: web.Application):
 def create_app() -> web.Application:
 	app = web.Application()
 	app.router.add_get("/generate", generate_handler)
-	app.router.add_get("/", gallery_handler)
-	app.router.add_get("/folder/{character}", folder_handler)
+	app.router.add_get("/", gallery.gallery_handler)
+	app.router.add_get("/folder/{character}", gallery.folder_handler)
 	app.router.add_static('/cache', str(Path(__file__).parent / "cache"))
 	experiment.add_routes(app)
 	app.on_startup.append(on_startup)

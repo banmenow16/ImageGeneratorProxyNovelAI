@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from imagine_generator_proxy.main import ensure_db_schema
+from imagine_generator_proxy.storage import ensure_db_schema, log_review_outcome
 
 OLD_SCHEMA = """
 CREATE TABLE images (
@@ -35,9 +35,7 @@ def test_migration_adds_columns_to_old_schema():
 
 
 def test_review_logging_roundtrip():
-	from imagine_generator_proxy.main import log_review_outcome
 	from imagine_generator_proxy.reviewer import Verdict
-	from types import SimpleNamespace
 	import tempfile, os
 
 	fd, path = tempfile.mkstemp(suffix=".db")

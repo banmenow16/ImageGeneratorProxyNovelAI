@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from imagine_generator_proxy.experiment import run_experiment
-from imagine_generator_proxy.main import ensure_db_schema
+from imagine_generator_proxy.storage import ensure_db_schema
 from imagine_generator_proxy.prompt_massager import PromptMassager
 from imagine_generator_proxy.reviewer import Verdict
 
