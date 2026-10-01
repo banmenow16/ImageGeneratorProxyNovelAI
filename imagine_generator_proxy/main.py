@@ -57,7 +57,36 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 		conn.execute("ALTER TABLE images ADD COLUMN raw_prompt TEXT")
 	if "massager_version" not in cols:
 		conn.execute("ALTER TABLE images ADD COLUMN massager_version INTEGER")
+	# Review memory: every vision-review outcome (approved and rejected) is
+	# recorded so future hint retrieval has history to learn from.
+	conn.execute('''CREATE TABLE IF NOT EXISTS reviews (
+		id INTEGER PRIMARY KEY,
+		digest TEXT,
+		character TEXT,
+		approved INTEGER,
+		category TEXT,
+		notes TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)''')
 	conn.commit()
+
+
+def log_review_outcome(db_path, digest: str, character: str, verdict) -> None:
+	"""Persist a review outcome (best effort — never breaks the request)."""
+	if not db_path:
+		return
+	try:
+		conn = sqlite3.connect(str(db_path))
+		try:
+			conn.execute(
+				"INSERT INTO reviews (digest, character, approved, category, notes) VALUES (?, ?, ?, ?, ?)",
+				(digest, character, 1 if verdict.approved else 0, verdict.category, (verdict.notes or "")[-1000:]),
+			)
+			conn.commit()
+		finally:
+			conn.close()
+	except Exception:
+		LOGGER.exception("Failed to log review outcome")
 
 
 def configure_logging() -> None:
@@ -237,6 +266,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 				break
 			if verdict.category == "minor":
 				LOGGER.warning("Reviewer minor-flag (notes=%s) — refusing to serve", (verdict.notes or "")[:200])
+				log_review_outcome(request.app.get("db_path"), digest, character, verdict)
 				try:
 					gens[digest].set()
 				except Exception:
@@ -251,6 +281,8 @@ async def generate_handler(request: web.Request) -> web.Response:
 					break
 		if verdict is not None and not verdict.approved:
 			LOGGER.warning("Reviewer still rejects on quality after retries — serving anyway")
+		if verdict is not None:
+			log_review_outcome(request.app.get("db_path"), digest, character, verdict)
 
 		# Write cache outside the lock
 		if isinstance(image.data, (bytes, bytearray)):

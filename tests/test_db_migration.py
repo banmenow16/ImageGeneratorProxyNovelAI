@@ -29,6 +29,31 @@ def test_migration_adds_columns_to_old_schema():
 	assert not {"raw_prompt", "massager_version"} & _columns(conn)
 	ensure_db_schema(conn)
 	assert {"raw_prompt", "massager_version"} <= _columns(conn)
+	# review-memory table is created alongside
+	tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+	assert "reviews" in tables
+
+
+def test_review_logging_roundtrip():
+	from imagine_generator_proxy.main import log_review_outcome
+	from imagine_generator_proxy.reviewer import Verdict
+	from types import SimpleNamespace
+	import tempfile, os
+
+	fd, path = tempfile.mkstemp(suffix=".db")
+	os.close(fd)
+	conn = sqlite3.connect(path)
+	conn.execute(OLD_SCHEMA)
+	ensure_db_schema(conn)
+	conn.close()
+
+	log_review_outcome(path, "abc123", "Naimi", Verdict(approved=False, category="quality", notes="fused fingers"))
+	log_review_outcome(path, "def456", "Naimi", Verdict(approved=True))
+	conn = sqlite3.connect(path)
+	rows = conn.execute("SELECT digest, approved, category FROM reviews ORDER BY id").fetchall()
+	conn.close()
+	os.unlink(path)
+	assert rows == [("abc123", 0, "quality"), ("def456", 1, None)]
 
 
 def test_migration_is_idempotent():

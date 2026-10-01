@@ -150,3 +150,10 @@ def test_from_config_reads_models():
 def test_verdict_dataclass_has_category_default():
 	v = Verdict(approved=True)
 	assert v.category is None
+
+
+def test_qc_prompt_carries_casebook_hints():
+	from imagine_generator_proxy.openrouter_reviewer import QC_PROMPT
+	# the evolving failure-mode casebook from rule_data.json is injected
+	assert "failure modes" in QC_PROMPT
+	assert "fused or extra fingers" in QC_PROMPT

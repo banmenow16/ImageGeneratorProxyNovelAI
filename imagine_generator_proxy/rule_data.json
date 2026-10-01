@@ -20,5 +20,13 @@
 		"score_9", "score_8_up", "score_7_up", "score_6_up", "score_5_up",
 		"source_anime", "best quality", "very aesthetic", "absurdres",
 		"masterpiece", "location", "no text", "amazing quality"
+	],
+	"reviewer_hints": [
+		"fused or extra fingers, especially when hands grip objects, touch the face or hair, or sit at the frame edge",
+		"extra or missing arms, worst on two-figure or physical-contact poses",
+		"melted or implausible torso when extreme breast-size wording is present",
+		"garbled pseudo-text on screens, phones, posters, signs and books",
+		"background figures appearing despite solo framing",
+		"mirrored or duplicated background props"
 	]
 }

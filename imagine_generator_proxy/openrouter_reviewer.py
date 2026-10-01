@@ -46,6 +46,19 @@ QC_PROMPT = (
 	"only 'VERDICT: SKIP_MINOR'."
 )
 
+# Evolving casebook: failure modes learned from QC of the cache, injected into
+# every first-pass review so the reviewer starts pipeline-aware instead of
+# from scratch. Extend in rule_data.json as new patterns are confirmed.
+from imagine_generator_proxy.prompt_rules import DATA as _RULE_DATA  # noqa: E402
+
+_REVIEWER_HINTS = _RULE_DATA.get("reviewer_hints") or []
+if _REVIEWER_HINTS:
+	QC_PROMPT += (
+		" Known recurring failure modes in this generation pipeline — apply "
+		+ "extra scrutiny: " + "; ".join(f"({i + 1}) {h}" for i, h in enumerate(_REVIEWER_HINTS))
+		+ "."
+	)
+
 AGE_PROMPT = (
 	"You are a safety reviewer making one definitive age determination for a figure "
 	"in an AI-generated artwork. The pipeline must refuse images depicting minors in "
