@@ -8,34 +8,11 @@ import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlencode
 
 from aiohttp import web
 
-from imagine_generator_proxy.prompts.massager import (
-	DEFAULT_NEGATIVE_BLOCKS,
-	LEGACY_NEGATIVE_BLOCKS,
-)
-
 LOGGER = logging.getLogger(__name__)
-
-
-def query_negative_from_stored(stored: Optional[str]) -> str:
-	"""Recover the caller's query negative from a stored negative prompt.
-
-	Stored negatives are ", ".join(built-in blocks + rule negations + query
-	negative); prefilling the whole thing into the workbench would duplicate
-	the blocks. Strip whichever known block prefix matches and return the
-	remainder (rule negations like the solo guard may ride along — harmless).
-	"""
-	if not stored:
-		return ""
-	for blocks in (LEGACY_NEGATIVE_BLOCKS, DEFAULT_NEGATIVE_BLOCKS):
-		prefix = ", ".join(blocks) + ", "
-		if stored.startswith(prefix):
-			return stored[len(prefix):]
-	return stored
 
 _STYLE = """
 	:root { --bg:#14161a; --card:#22262e; --border:#333842; --text:#e6e9ee;
@@ -155,12 +132,13 @@ async def folder_handler(request: web.Request) -> web.Response:
 				if display else ""
 			)
 		# one click from the gallery into a pre-filled workbench run: prefer
-		# the raw caller prompt (the workbench re-massages anyway) and only
-		# the caller's own query negative
+		# the raw caller prompt (the workbench re-massages anyway), and carry
+		# the negative exactly as the card displays it — matching the user's
+		# manual copy-paste workflow
 		experiment_href = "/experiment?" + urlencode({
 			"character": character,
 			"prompt": raw_prompt or prompt or "",
-			"negative": query_negative_from_stored(negative),
+			"negative": (negative or "").rstrip(", ").strip(),
 		})
 		cards.append(
 			f'<div class="card"><img src="/cache/{_esc(character)}/{_esc(filename)}" alt="{_esc(filename)}">'

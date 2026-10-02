@@ -9,11 +9,7 @@ import tempfile
 from pathlib import Path
 
 from imagine_generator_proxy.prompts.massager import LEGACY_NEGATIVE_BLOCKS
-from imagine_generator_proxy.server.gallery import (
-	folder_handler,
-	gallery_handler,
-	query_negative_from_stored,
-)
+from imagine_generator_proxy.server.gallery import folder_handler, gallery_handler
 
 
 class _FakeRequest:
@@ -81,7 +77,8 @@ def test_folder_handler_404_for_unknown_character(tmp_path: Path):
 
 def test_card_links_to_prefilled_workbench(tmp_path: Path):
 	"""Each image card links to /experiment with the RAW prompt (not the
-	stored prefixed one) and only the caller's query negative."""
+	stored prefixed one) and the full displayed negative — matching the
+	manual copy-paste workflow the link replaces."""
 	import re
 	from html import unescape
 	from urllib.parse import parse_qs, urlparse
@@ -92,26 +89,8 @@ def test_card_links_to_prefilled_workbench(tmp_path: Path):
 	# hrefs are HTML-escaped in the attribute (& -> &amp;); browsers decode
 	# that when parsing, so decode here too before checking the params
 	params = parse_qs(urlparse(unescape(hrefs[0])).query)
-	# raw prompt preferred over the stored prefixed one; character rides along
 	assert params["character"] == ["Naimi"]
 	assert params["prompt"] == ["woman, <angle> brackets & quotes"]
-	# only the caller's own query negative (here: empty), not the block stack
-	assert params.get("negative", [""]) == [""]
-
-
-def test_query_negative_recovery():
-	"""Only the caller's own negative is recovered from stored negatives."""
-	from imagine_generator_proxy.prompts.massager import (
-		DEFAULT_NEGATIVE_BLOCKS,
-		LEGACY_NEGATIVE_BLOCKS,
-	)
-	# legacy shape: blocks + empty query (trailing ", ")
-	legacy = ", ".join(LEGACY_NEGATIVE_BLOCKS + [""])
-	assert query_negative_from_stored(legacy) == ""
-	# default shape with a user query
-	stored = ", ".join(DEFAULT_NEGATIVE_BLOCKS + ["blurry face"])
-	assert query_negative_from_stored(stored) == "blurry face"
-	# unknown shape falls back to the stored text
-	assert query_negative_from_stored("something else") == "something else"
-	assert query_negative_from_stored("") == ""
-	assert query_negative_from_stored(None) == ""
+	# the FULL negative as displayed (trailing comma trimmed), not just the
+	# query negative — the user copies what the card shows
+	assert params["negative"] == [", ".join(LEGACY_NEGATIVE_BLOCKS)]
