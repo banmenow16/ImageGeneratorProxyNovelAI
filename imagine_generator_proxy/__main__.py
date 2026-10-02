@@ -14,7 +14,10 @@ def main() -> None:
 
     configure_logging()
     port = args.port if args.port is not None else int(os.environ.get("PORT", "8080"))
-    web.run_app(create_app(), host=args.host, port=port)
+    # access_log=None: the app's request_logging_middleware covers request
+    # logging (incl. slow-request and unhandled-exception context), so
+    # aiohttp's built-in access logger would just duplicate every line.
+    web.run_app(create_app(), host=args.host, port=port, access_log=None)
 
 
 if __name__ == "__main__":

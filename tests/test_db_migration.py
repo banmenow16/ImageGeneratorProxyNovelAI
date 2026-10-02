@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
-from imagine_generator_proxy.server.storage import ensure_db_schema, log_review_outcome
+from imagine_generator_proxy.server.storage import Database, ensure_db_schema
 
 OLD_SCHEMA = """
 CREATE TABLE images (
@@ -40,15 +41,14 @@ def test_review_logging_roundtrip():
 
 	fd, path = tempfile.mkstemp(suffix=".db")
 	os.close(fd)
-	conn = sqlite3.connect(path)
-	conn.execute(OLD_SCHEMA)
-	ensure_db_schema(conn)
-	conn.close()
+	database = Database(Path(path))
+	database.initialize()
 
-	log_review_outcome(path, "abc123", "Naimi", Verdict(approved=False, category="quality", notes="fused fingers"),
+	database.log_review_outcome("abc123", "Naimi",
+		Verdict(approved=False, category="quality", notes="fused fingers"),
 		attempt=0, tags="huge breasts, arms overhead")
-	log_review_outcome(path, "abc123", "Naimi", Verdict(approved=True), attempt=1)
-	conn = sqlite3.connect(path)
+	database.log_review_outcome("abc123", "Naimi", Verdict(approved=True), attempt=1)
+	conn = database.connect()
 	rows = conn.execute("SELECT digest, approved, category, attempt, tags FROM reviews ORDER BY id").fetchall()
 	conn.close()
 	os.unlink(path)

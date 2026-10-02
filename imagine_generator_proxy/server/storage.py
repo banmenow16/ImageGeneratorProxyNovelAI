@@ -6,12 +6,15 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
+from pathlib import Path
 from typing import Optional
+
+from imagine_generator_proxy.review.base import Verdict
 
 LOGGER = logging.getLogger(__name__)
 
 
-def compute_digest(character: str, prompt: str, negative_prompt: str, model,
+def compute_digest(character: str, prompt: str, negative_prompt: str, model: str,
 		massager_version: Optional[int]) -> str:
 	"""Cache digest for a generation request.
 
@@ -83,41 +86,72 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 	conn.commit()
 
 
-def record_generated_image(db_path, character: str, digest: str, prompt: str,
-		negative_prompt: str, model: str, raw_prompt: str,
-		massager_version: Optional[int]) -> None:
-	"""Insert a cache row for a freshly generated image (best effort)."""
-	try:
-		conn = sqlite3.connect(str(db_path))
+class Database:
+	"""Owns the SQLite database path; all writes go through here.
+
+	Every method is best-effort: persistence problems are logged and never
+	propagate into request handling.
+	"""
+
+	def __init__(self, db_path: Path):
+		self._path = db_path
+
+	@property
+	def path(self) -> Path:
+		return self._path
+
+	def connect(self) -> sqlite3.Connection:
+		return sqlite3.connect(str(self._path))
+
+	def initialize(self) -> None:
+		"""Create the images table and apply migrations (startup path)."""
+		conn = self.connect()
 		try:
-			conn.execute(
-				"INSERT OR IGNORE INTO images (character, digest, prompt, negative_prompt, model, raw_prompt, massager_version)"
-				" VALUES (?, ?, ?, ?, ?, ?, ?)",
-				(character, digest, prompt, negative_prompt, model, raw_prompt, massager_version),
-			)
-			conn.commit()
+			conn.execute('''CREATE TABLE IF NOT EXISTS images (
+				id INTEGER PRIMARY KEY,
+				character TEXT,
+				digest TEXT UNIQUE,
+				prompt TEXT,
+				negative_prompt TEXT,
+				model TEXT,
+				first_appearance TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)''')
+			ensure_db_schema(conn)
 		finally:
 			conn.close()
-	except Exception:
-		LOGGER.exception("Failed to store generated image in database")
 
-
-def log_review_outcome(db_path, digest: str, character: str, verdict, attempt: int = 0,
-		tags: str = "") -> None:
-	"""Persist a review outcome (best effort — never breaks the request)."""
-	if not db_path:
-		return
-	try:
-		conn = sqlite3.connect(str(db_path))
+	def record_generated_image(self, character: str, digest: str, prompt: str,
+			negative_prompt: str, model: str, raw_prompt: str,
+			massager_version: Optional[int]) -> None:
+		"""Insert a cache row for a freshly generated image."""
 		try:
-			conn.execute(
-				"INSERT INTO reviews (digest, character, approved, category, notes, attempt, tags)"
-				" VALUES (?, ?, ?, ?, ?, ?, ?)",
-				(digest, character, 1 if verdict.approved else 0, verdict.category,
-					(verdict.notes or "")[-1000:], attempt, tags[-2000:]),
-			)
-			conn.commit()
-		finally:
-			conn.close()
-	except Exception:
-		LOGGER.exception("Failed to log review outcome")
+			conn = self.connect()
+			try:
+				conn.execute(
+					"INSERT OR IGNORE INTO images (character, digest, prompt, negative_prompt, model, raw_prompt, massager_version)"
+					" VALUES (?, ?, ?, ?, ?, ?, ?)",
+					(character, digest, prompt, negative_prompt, model, raw_prompt, massager_version),
+				)
+				conn.commit()
+			finally:
+				conn.close()
+		except Exception:
+			LOGGER.exception("Failed to store generated image in database")
+
+	def log_review_outcome(self, digest: str, character: str, verdict: Verdict,
+			attempt: int = 0, tags: str = "") -> None:
+		"""Record a review outcome for the evolving hint history."""
+		try:
+			conn = self.connect()
+			try:
+				conn.execute(
+					"INSERT INTO reviews (digest, character, approved, category, notes, attempt, tags)"
+					" VALUES (?, ?, ?, ?, ?, ?, ?)",
+					(digest, character, 1 if verdict.approved else 0, verdict.category,
+						(verdict.notes or "")[-1000:], attempt, tags[-2000:]),
+				)
+				conn.commit()
+			finally:
+				conn.close()
+		except Exception:
+			LOGGER.exception("Failed to log review outcome")

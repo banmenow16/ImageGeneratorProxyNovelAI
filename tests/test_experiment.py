@@ -11,10 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from imagine_generator_proxy.server.experiment import run_experiment
-from imagine_generator_proxy.server.storage import ensure_db_schema
 from imagine_generator_proxy.prompts import PromptMassager
 from imagine_generator_proxy.review.base import Verdict
+from imagine_generator_proxy.server.experiment import ExperimentRunner, _run_payload
+from imagine_generator_proxy.server.storage import Database, ensure_db_schema
 
 
 def _png_bytes(seed: bytes = b"png"):
@@ -49,20 +49,19 @@ class _ScriptedReviewer:
 		return self._verdicts.pop(0)
 
 
-def _make_app(tmp_path: Path, generator, reviewer) -> dict:
+def _make_runner(tmp_path: Path, generator, reviewer) -> ExperimentRunner:
 	fd, db = tempfile.mkstemp(suffix=".db", dir=str(tmp_path))
 	os.close(fd)
-	conn = sqlite3.connect(db)
-	ensure_db_schema(conn)
-	conn.close()
-	return {
-		"massager": PromptMassager.from_config({}, tmp_path),
-		"generator": generator,
-		"experiment_reviewer": reviewer,
-		"cache_dir": tmp_path / "cache",
-		"db_path": Path(db),
-		"config": {},
-	}
+	database = Database(Path(db))
+	database.initialize()
+	return ExperimentRunner(
+		massager=PromptMassager.from_config({}, tmp_path),
+		generator=generator,
+		reviewer=reviewer,
+		config={},
+		cache_dir=tmp_path / "cache",
+		database=database,
+	)
 
 
 def run(coro):
@@ -72,9 +71,9 @@ def run(coro):
 def test_happy_path_records_all_variants(tmp_path: Path):
 	gen = _StubGenerator()
 	reviewer = _ScriptedReviewer([Verdict(approved=True)])
-	app = _make_app(tmp_path, gen, reviewer)
+	runner = _make_runner(tmp_path, gen, reviewer)
 
-	out = run(run_experiment(app, "Naimi", "huge breasts, red dress, solo", "",
+	out = run(runner.run("Naimi", "huge breasts, red dress, solo",
 		do_massage=True, do_review=True, retries=1))
 
 	assert "blocked" not in out
@@ -101,9 +100,9 @@ def test_quality_rejection_chain_applies_fixes(tmp_path: Path):
 			fix_add=["arms at sides"], fix_negate=["fused fingers"]),
 		Verdict(approved=True),
 	])
-	app = _make_app(tmp_path, gen, reviewer)
+	runner = _make_runner(tmp_path, gen, reviewer)
 
-	out = run(run_experiment(app, "Naimi", "massive breasts, sitting", "",
+	out = run(runner.run("Naimi", "massive breasts, sitting",
 		do_massage=True, do_review=True, retries=1))
 
 	assert len(out["variants"]) == 3  # raw + attempt-0 + attempt-1
@@ -124,10 +123,9 @@ def test_minor_flag_stops_chain_fail_closed(tmp_path: Path):
 	reviewer = _ScriptedReviewer([
 		Verdict(approved=False, category="minor", notes="age assessment failed"),
 	])
-	app = _make_app(tmp_path, gen, reviewer)
+	runner = _make_runner(tmp_path, gen, reviewer)
 
-	out = run(run_experiment(app, "Naimi", "woman, red dress", "",
-		do_massage=True, do_review=True, retries=2))
+	out = run(runner.run("Naimi", "woman, red dress", do_massage=True, do_review=True, retries=2))
 
 	assert len(out["variants"]) == 2  # raw + attempt-0 only — chain stopped
 	assert out["variants"][1]["category"] == "minor"
@@ -137,9 +135,9 @@ def test_minor_flag_stops_chain_fail_closed(tmp_path: Path):
 
 def test_safety_block_refuses_whole_experiment(tmp_path: Path):
 	gen = _StubGenerator()
-	app = _make_app(tmp_path, gen, _ScriptedReviewer([]))
+	runner = _make_runner(tmp_path, gen, _ScriptedReviewer([]))
 
-	out = run(run_experiment(app, "Naimi", "cute loli, red dress", "", do_massage=True))
+	out = run(runner.run("Naimi", "cute loli, red dress", do_massage=True))
 	assert "blocked" in out
 	assert out["blocked"]["rule"]
 	assert gen.calls == 0  # nothing generated
@@ -152,10 +150,9 @@ def test_unsafe_fix_proposals_are_dropped(tmp_path: Path):
 			fix_add=["child", "nice pose"], fix_negate=[]),
 		Verdict(approved=True),
 	])
-	app = _make_app(tmp_path, gen, reviewer)
+	runner = _make_runner(tmp_path, gen, reviewer)
 
-	out = run(run_experiment(app, "Naimi", "woman, bedroom", "",
-		do_massage=True, do_review=True, retries=1))
+	out = run(runner.run("Naimi", "woman, bedroom", do_massage=True, do_review=True, retries=1))
 
 	# the unsafe tag never reaches the regenerated prompt
 	assert "child" not in gen.prompts[2][0]
@@ -164,10 +161,9 @@ def test_unsafe_fix_proposals_are_dropped(tmp_path: Path):
 
 def test_reviewer_unavailable_still_records_final(tmp_path: Path):
 	gen = _StubGenerator()
-	app = _make_app(tmp_path, gen, None)  # no experiment_reviewer
+	runner = _make_runner(tmp_path, gen, None)  # no reviewer
 
-	out = run(run_experiment(app, "Naimi", "woman, red dress", "",
-		do_massage=True, do_review=True, retries=2))
+	out = run(runner.run("Naimi", "woman, red dress", do_massage=True, do_review=True, retries=2))
 
 	assert out["reviewer_used"] is False
 	assert len(out["variants"]) == 2  # raw + single unreviewed attempt
@@ -178,20 +174,21 @@ def test_reviewer_unavailable_still_records_final(tmp_path: Path):
 def test_db_serializer_roundtrip(tmp_path: Path):
 	"""The DB-backed serializer must handle 'raw' and 'attempt-N' variants
 	(catches the eager-default .get() bug that crashed the endpoints)."""
-	from imagine_generator_proxy.server.experiment import _record_image, _record_run, _run_payload
-
 	fd, db = tempfile.mkstemp(suffix=".db", dir=str(tmp_path))
 	os.close(fd)
 	conn = sqlite3.connect(db)
 	ensure_db_schema(conn)
-	conn.close()
-
-	run_id = _record_run(db, "Naimi", "raw prompt here", "")
-	_record_image(db, run_id, "raw", "p0", "n0", "Naimi/experiments/r1/raw.png", None, None, "", "", False)
-	_record_image(db, run_id, "attempt-0", "p1", "n1", "Naimi/experiments/r1/attempt-0.png", 0, "quality", "melted", "", False)
-	_record_image(db, run_id, "attempt-1", "p2", "n2", "Naimi/experiments/r1/attempt-1.png", 1, None, "", "arms at sides", True)
-
-	conn = sqlite3.connect(db)
+	cur = conn.execute("INSERT INTO experiment_runs (character, raw_prompt, raw_negative)"
+		" VALUES ('Naimi', 'raw prompt here', '')")
+	conn.commit()
+	run_id = cur.lastrowid
+	conn.execute("INSERT INTO experiment_images (run_id, variant, prompt_used, negative_used, image_path, approved, category, notes, fix_applied, is_final)"
+		" VALUES (?, 'raw', 'p0', 'n0', 'Naimi/experiments/r1/raw.png', NULL, NULL, '', '', 0)", (run_id,))
+	conn.execute("INSERT INTO experiment_images (run_id, variant, prompt_used, negative_used, image_path, approved, category, notes, fix_applied, is_final)"
+		" VALUES (?, 'attempt-0', 'p1', 'n1', 'Naimi/experiments/r1/attempt-0.png', 0, 'quality', 'melted', '', 0)", (run_id,))
+	conn.execute("INSERT INTO experiment_images (run_id, variant, prompt_used, negative_used, image_path, approved, category, notes, fix_applied, is_final)"
+		" VALUES (?, 'attempt-1', 'p2', 'n2', 'Naimi/experiments/r1/attempt-1.png', 1, NULL, '', 'arms at sides', 1)", (run_id,))
+	conn.commit()
 	payload = _run_payload(conn, run_id)
 	conn.close()
 	os.unlink(db)
