@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from imagine_generator_proxy import prompt_rules
+from imagine_generator_proxy.prompts import rules as prompt_rules
 
 LOGGER = logging.getLogger(__name__)
 

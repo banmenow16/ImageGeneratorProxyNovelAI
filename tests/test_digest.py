@@ -7,7 +7,7 @@ import hashlib
 
 from novelai_api.ImagePreset import ImageModel
 
-from imagine_generator_proxy.storage import compute_digest
+from imagine_generator_proxy.server.storage import compute_digest
 
 CHARACTER = "Naimi"
 PROMPT = "score_9, score_8_up, source_anime,red dress"

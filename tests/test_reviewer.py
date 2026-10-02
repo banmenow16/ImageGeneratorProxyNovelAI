@@ -7,12 +7,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from imagine_generator_proxy.openrouter_reviewer import (
+from imagine_generator_proxy.review.openrouter import (
 	OpenRouterReviewer,
 	parse_assessment,
 	parse_verdict,
 )
-from imagine_generator_proxy.reviewer import Verdict
+from imagine_generator_proxy.review.base import Verdict
 
 
 # --- parsing ---
@@ -155,7 +155,7 @@ def test_verdict_dataclass_has_category_default():
 
 
 def test_qc_prompt_carries_casebook_hints():
-	from imagine_generator_proxy.openrouter_reviewer import QC_PROMPT
+	from imagine_generator_proxy.review.openrouter import QC_PROMPT
 	# the evolving failure-mode casebook from rule_data.json is injected
 	assert "failure modes" in QC_PROMPT
 	assert "fused or extra fingers" in QC_PROMPT
@@ -181,20 +181,20 @@ def test_session_context_injected_on_retry_attempt():
 # --- FIX proposals ---
 
 def test_parse_fix_extracts_add_and_negate():
-	from imagine_generator_proxy.openrouter_reviewer import parse_fix
+	from imagine_generator_proxy.review.openrouter import parse_fix
 	add, negate = parse_fix("VERDICT: BAD: melted torso\nFIX: arms at sides, sitting upright, neg:fused fingers")
 	assert add == ["arms at sides", "sitting upright"]
 	assert negate == ["fused fingers"]
 
 
 def test_parse_fix_absent_returns_empty():
-	from imagine_generator_proxy.openrouter_reviewer import parse_fix
+	from imagine_generator_proxy.review.openrouter import parse_fix
 	assert parse_fix("VERDICT: GOOD") == ([], [])
 	assert parse_fix("") == ([], [])
 
 
 def test_parse_fix_caps_entries_and_drops_prose():
-	from imagine_generator_proxy.openrouter_reviewer import parse_fix
+	from imagine_generator_proxy.review.openrouter import parse_fix
 	long_prose = "a" * 80
 	add, negate = parse_fix(
 		f"FIX: t1, {long_prose}, t2, neg:n1, neg:n2, t3, t4, t5, t6, t7, t8")
@@ -220,7 +220,7 @@ def test_good_verdict_has_no_fix():
 
 def test_history_injected_when_available():
 	import sqlite3, tempfile, os
-	from imagine_generator_proxy.storage import ensure_db_schema
+	from imagine_generator_proxy.server.storage import ensure_db_schema
 
 	fd, path = tempfile.mkstemp(suffix=".db")
 	os.close(fd)

@@ -30,7 +30,7 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-from imagine_generator_proxy.reviewer import Verdict
+from imagine_generator_proxy.review.base import Verdict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ QC_PROMPT = (
 # Evolving casebook: failure modes learned from QC of the cache, injected into
 # every first-pass review so the reviewer starts pipeline-aware instead of
 # from scratch. Extend in rule_data.json as new patterns are confirmed.
-from imagine_generator_proxy.prompt_rules import DATA as _RULE_DATA  # noqa: E402
+from imagine_generator_proxy.prompts.rules import DATA as _RULE_DATA  # noqa: E402
 
 _REVIEWER_HINTS = _RULE_DATA.get("reviewer_hints") or []
 if _REVIEWER_HINTS:

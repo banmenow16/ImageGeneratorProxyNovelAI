@@ -1,7 +1,7 @@
 import argparse
 import os
 from aiohttp import web
-from .main import create_app
+from .server.app import configure_logging, create_app
 
 
 def main() -> None:
@@ -12,6 +12,7 @@ def main() -> None:
         help="interface to bind (default: 0.0.0.0)")
     args = parser.parse_args()
 
+    configure_logging()
     port = args.port if args.port is not None else int(os.environ.get("PORT", "8080"))
     web.run_app(create_app(), host=args.host, port=port)
 

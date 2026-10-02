@@ -11,10 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from imagine_generator_proxy.experiment import run_experiment
-from imagine_generator_proxy.storage import ensure_db_schema
-from imagine_generator_proxy.prompt_massager import PromptMassager
-from imagine_generator_proxy.reviewer import Verdict
+from imagine_generator_proxy.server.experiment import run_experiment
+from imagine_generator_proxy.server.storage import ensure_db_schema
+from imagine_generator_proxy.prompts import PromptMassager
+from imagine_generator_proxy.review.base import Verdict
 
 
 def _png_bytes(seed: bytes = b"png"):
@@ -178,7 +178,7 @@ def test_reviewer_unavailable_still_records_final(tmp_path: Path):
 def test_db_serializer_roundtrip(tmp_path: Path):
 	"""The DB-backed serializer must handle 'raw' and 'attempt-N' variants
 	(catches the eager-default .get() bug that crashed the endpoints)."""
-	from imagine_generator_proxy.experiment import _record_image, _record_run, _run_payload
+	from imagine_generator_proxy.server.experiment import _record_image, _record_run, _run_payload
 
 	fd, db = tempfile.mkstemp(suffix=".db", dir=str(tmp_path))
 	os.close(fd)

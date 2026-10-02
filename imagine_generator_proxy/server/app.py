@@ -16,22 +16,21 @@ from aiohttp import web, ClientSession
 from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageModel
 
-from imagine_generator_proxy import experiment, gallery
-from imagine_generator_proxy.cache import (
-	prepare_nonbinary_response,
-	read_cached_image,
-	write_cache_and_prepare_response,
-)
-from imagine_generator_proxy.generation import ImageGenerator, NovelAIGenerator, ImageGenerationType
-from imagine_generator_proxy.openrouter_reviewer import OpenRouterReviewer
-from imagine_generator_proxy.prompt_massager import (
+from imagine_generator_proxy.generation import NovelAIGenerator, ImageGenerationType  # noqa: F401 (ImageGenerationType: future img2img/inpainting use)
+from imagine_generator_proxy.prompts import (
 	MassagedPrompt,
 	PromptMassager,
 	build_negative_prompt,
 	legacy_assemble,
 )
-from imagine_generator_proxy.reviewer import NoopReviewer
-from imagine_generator_proxy.storage import (
+from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer
+from imagine_generator_proxy.server import experiment, gallery
+from imagine_generator_proxy.server.cache import (
+	prepare_nonbinary_response,
+	read_cached_image,
+	write_cache_and_prepare_response,
+)
+from imagine_generator_proxy.server.storage import (
 	compute_digest,
 	ensure_db_schema,
 	log_review_outcome,
@@ -40,13 +39,17 @@ from imagine_generator_proxy.storage import (
 
 LOGGER = logging.getLogger(__name__)
 
+# Resource files (config.yaml, cache/, images.db, logs/) live at the package
+# root, one level above this server/ subpackage.
+PACKAGE_ROOT = Path(__file__).parent.parent
+
 
 def configure_logging() -> None:
 	if logging.getLogger().handlers:
 		return
 
 	log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-	log_dir = Path(__file__).parent / "logs"
+	log_dir = PACKAGE_ROOT / "logs"
 	log_dir.mkdir(parents=True, exist_ok=True)
 	formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -280,7 +283,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 def load_config() -> dict:
 	"""Load config.yaml next to the package (PyYAML, with a flat key:value
 	fallback parser when PyYAML is unavailable)."""
-	cfg_path = Path(__file__).parent / "config.yaml"
+	cfg_path = PACKAGE_ROOT / "config.yaml"
 	if not cfg_path.exists():
 		return {}
 
@@ -330,7 +333,7 @@ async def on_startup(app: web.Application):
 	app["generations"] = {}
 
 	# Prepare cache directory
-	cache_dir = Path(__file__).parent / "cache"
+	cache_dir = PACKAGE_ROOT / "cache"
 	try:
 		cache_dir.mkdir(parents=True, exist_ok=True)
 	except Exception:
@@ -338,7 +341,7 @@ async def on_startup(app: web.Application):
 	app["cache_dir"] = cache_dir
 
 	# Initialize database
-	db_path = Path(__file__).parent / "images.db"
+	db_path = PACKAGE_ROOT / "images.db"
 	conn = sqlite3.connect(str(db_path))
 	conn.execute('''CREATE TABLE IF NOT EXISTS images (
 		id INTEGER PRIMARY KEY,
@@ -358,7 +361,7 @@ async def on_startup(app: web.Application):
 	app["config"] = config
 
 	# Prompt massager (safety filter + cleanup + enhance rules)
-	app["massager"] = PromptMassager.from_config(config, Path(__file__).parent)
+	app["massager"] = PromptMassager.from_config(config, PACKAGE_ROOT)
 
 	# Generation wrapper (lock + retry/backoff) around the NovelAI API
 	app["generator"] = NovelAIGenerator(api, config, lock=app["generate_lock"])
@@ -401,7 +404,7 @@ def create_app() -> web.Application:
 	app.router.add_get("/generate", generate_handler)
 	app.router.add_get("/", gallery.gallery_handler)
 	app.router.add_get("/folder/{character}", gallery.folder_handler)
-	app.router.add_static('/cache', str(Path(__file__).parent / "cache"))
+	app.router.add_static('/cache', str(PACKAGE_ROOT / "cache"))
 	experiment.add_routes(app)
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)

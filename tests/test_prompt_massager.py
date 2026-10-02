@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from imagine_generator_proxy import prompt_rules
-from imagine_generator_proxy.prompt_massager import (
+from imagine_generator_proxy.prompts import rules as prompt_rules
+from imagine_generator_proxy.prompts import (
 	MassagedPrompt,
 	PromptMassager,
 	build_negative_prompt,

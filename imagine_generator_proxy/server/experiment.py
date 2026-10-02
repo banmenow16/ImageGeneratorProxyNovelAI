@@ -24,14 +24,14 @@ from typing import Optional
 from aiohttp import web
 
 from imagine_generator_proxy.generation import NovelAIGenerator
-from imagine_generator_proxy.openrouter_reviewer import OpenRouterReviewer
-from imagine_generator_proxy.prompt_massager import (
+from imagine_generator_proxy.review.openrouter import OpenRouterReviewer
+from imagine_generator_proxy.prompts import (
 	MassagedPrompt,
 	PromptMassager,
 	build_negative_prompt,
 	legacy_assemble,
 )
-from imagine_generator_proxy.reviewer import NoopReviewer, Verdict
+from imagine_generator_proxy.review.base import NoopReviewer, Verdict
 
 LOGGER = logging.getLogger(__name__)
 

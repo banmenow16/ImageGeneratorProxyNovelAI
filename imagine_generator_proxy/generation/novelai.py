@@ -3,40 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Optional
 
 from novelai_api.NovelAI_API import NovelAIAPI
 from novelai_api.ImagePreset import ImageGenerationType, ImageModel, ImagePreset
 
+from imagine_generator_proxy.generation.base import GeneratedImage, ImageGenerator  # noqa: F401 (re-exported)
+
 __all__ = ["GeneratedImage", "ImageGenerator", "NovelAIGenerator", "build_preset", "ImageGenerationType"]
 
 LOGGER = logging.getLogger(__name__)
-
-
-@dataclass
-class GeneratedImage:
-	"""A single image returned by a generation backend."""
-
-	name: str
-	data: bytes
-	seed: Optional[int] = None
-
-
-class ImageGenerator(Protocol):
-	"""Backend-neutral image generation interface.
-
-	Implementations (NovelAI today; e.g. Civitai/local model servers later)
-	generate one image for a prompt/negative-prompt pair. `prompt_is_complete`
-	is True when the caller (the prompt massager) already assembled the full
-	quality-tagged prompt: backends that auto-decorate prompts must not add
-	their own tags then. Backends with no auto-decoration may ignore it.
-	Returns None when the backend stays busy/unavailable after its retries;
-	raise on hard errors.
-	"""
-
-	async def generate(self, prompt: str, negative_prompt: str,
-			prompt_is_complete: bool) -> Optional[GeneratedImage]: ...
 
 
 def build_preset(model: ImageModel, add_quality_tags: bool) -> ImagePreset:

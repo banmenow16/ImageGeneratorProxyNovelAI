@@ -46,16 +46,18 @@ regenerate rejected images.
 
 ## Architecture
 
-| Module | Role |
-|---|---|
-| `main.py` | App factory, `/generate` handler, startup/config. |
-| `generation.py` | NovelAI calls: lock, pacing, 429 retry/backoff. |
-| `prompt_massager.py` | Rule pipeline: safety filter → cleanup → enhance. |
-| `prompt_rules.py` + `rule_data.json` | Versioned rules + tag vocabularies. |
-| `reviewer.py` / `openrouter_reviewer.py` | Two-tier vision QC (cheap first pass + age escalation), FIX proposals, retrieval hints from review history. |
-| `experiment.py` + `experiment.html` | The pipeline workbench. |
-| `storage.py` | Digests, DB schema/migrations, review logging. |
-| `gallery.py` | Cache gallery pages. |
+```
+imagine_generator_proxy/
+	generation/   base.py (ImageGenerator protocol) · novelai.py (backend)
+	prompts/      massager.py (safety → cleanup → enhance) · rules.py · rule_data.json
+	review/       base.py (Reviewer protocol) · openrouter.py (two-tier vision QC)
+	server/       app.py (app factory + /generate) · experiment.py/.html (workbench)
+	              gallery.py · cache.py (cache responses) · storage.py (DB)
+```
+
+`ImageGenerator` and `Reviewer` are backend-neutral protocols — alternative
+generation backends (e.g. Civitai or local model servers) or reviewers slot
+in as sibling modules without touching the server layer.
 
 Safety filter: prompts with minor-coded content are refused (HTTP 400) before
 any generation; age-flagged *images* are refused (HTTP 422) after two-model
