@@ -57,7 +57,8 @@ QC_PROMPT = (
 # Evolving casebook: failure modes learned from QC of the cache, injected into
 # every first-pass review so the reviewer starts pipeline-aware instead of
 # from scratch. Extend in rule_data.json as new patterns are confirmed.
-from imagine_generator_proxy.prompts.rules import DATA as _RULE_DATA  # noqa: E402
+from imagine_generator_proxy.prompts.rules import DATA as _RULE_DATA
+from imagine_generator_proxy.prompts.rules import LARGE_CHEST_TAGS  # noqa: E402
 
 _REVIEWER_HINTS = _RULE_DATA.get("reviewer_hints") or []
 if _REVIEWER_HINTS:
@@ -127,9 +128,11 @@ class OpenRouterReviewer(Reviewer):
 			escalation_model: str = DEFAULT_ESCALATION_MODEL,
 			client: Optional[AsyncOpenAI] = None,
 			timeout: float = 90.0,
-			db_path=None):
+			db_path=None,
+			confirm_high_scrutiny: bool = True):
 		self.first_pass_model = first_pass_model
 		self.escalation_model = escalation_model
+		self.confirm_high_scrutiny = confirm_high_scrutiny
 		self._db_path = db_path
 		self._client = client or AsyncOpenAI(
 			api_key=api_key,
@@ -149,6 +152,7 @@ class OpenRouterReviewer(Reviewer):
 			first_pass_model=str(config.get("reviewer_model", DEFAULT_FIRST_PASS_MODEL)),
 			escalation_model=str(config.get("reviewer_escalation_model", DEFAULT_ESCALATION_MODEL)),
 			db_path=db_path,
+			confirm_high_scrutiny=bool(config.get("reviewer_confirm_high_scrutiny", True)),
 		)
 
 	def _recent_history(self, character: str) -> str:
@@ -180,6 +184,12 @@ class OpenRouterReviewer(Reviewer):
 			"use it to spot recurring defects and to check whether previously-failed "
 			"approaches were fixed: " + " | ".join(lines)
 		)
+
+	@staticmethod
+	def _is_high_scrutiny(prompt: str) -> bool:
+		"""Prompts carrying large-chest tags get approval confirmation."""
+		lower = (prompt or "").lower()
+		return any(tag in lower for tag in LARGE_CHEST_TAGS)
 
 	async def _chat(self, model: str, prompt: str, image_b64: str) -> str:
 		resp = await self._client.chat.completions.create(
@@ -223,6 +233,27 @@ class OpenRouterReviewer(Reviewer):
 
 		verdict = parse_verdict(first)
 		if verdict == "GOOD":
+			if self.confirm_high_scrutiny and self._is_high_scrutiny(prompt):
+				# Qwen demonstrably false-negatives borderline torso geometry
+				# on large-chest prompts (experiment 14: approved a mid-abdomen
+				# attachment as "acceptable for style"). Cheap first pass, then
+				# one confirmation from the stronger judge before it stands.
+				try:
+					confirmation = await self._chat(self.escalation_model, qc_prompt, image_b64)
+				except Exception as e:
+					LOGGER.error("High-scrutiny confirmation failed (%s); keeping first-pass approval", e)
+					return Verdict(approved=True, notes=first[-400:] + " [confirmation unavailable]")
+				conf = parse_verdict(confirmation)
+				if conf == "GOOD":
+					return Verdict(approved=True,
+						notes=f"confirmed by {self.escalation_model}: " + confirmation[-400:])
+				if conf in ("BAD", "SKIP_MINOR"):
+					LOGGER.info("High-scrutiny confirmation overturned an approval (%s)", conf)
+					fix_add, fix_negate = parse_fix(confirmation)
+					return Verdict(approved=False,
+						category="minor" if conf == "SKIP_MINOR" else "quality",
+						notes=confirmation[-400:], fix_add=fix_add, fix_negate=fix_negate)
+				return Verdict(approved=True, notes=first[-400:])
 			return Verdict(approved=True, notes=first[-400:])
 		if verdict == "SKIP_MINOR":
 			try:

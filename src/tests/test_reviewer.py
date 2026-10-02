@@ -154,6 +154,53 @@ def test_verdict_dataclass_has_category_default():
 	assert v.category is None
 
 
+# --- high-scrutiny confirmation (large-chest approvals get a second judge) ---
+
+def test_chest_prompt_approval_requires_confirmation():
+	reviewer, completions = make_reviewer([
+		"VERDICT: GOOD",
+		"confirmed clean\nVERDICT: GOOD",
+	])
+	verdict = run(reviewer.review(b"img", "woman, huge breasts, bedroom"))
+	assert verdict.approved is True
+	assert len(completions.calls) == 2  # first pass + confirmation
+	assert "confirmed" in verdict.notes
+
+
+def test_chest_prompt_confirmation_can_overturn_approval():
+	reviewer, completions = make_reviewer([
+		"VERDICT: GOOD",
+		"breasts attach over the mid-abdomen\nVERDICT: BAD: torso elongated\nFIX: neg:extreme sizes",
+	])
+	verdict = run(reviewer.review(b"img", "woman, massive breasts, bedroom"))
+	assert verdict.approved is False
+	assert verdict.category == "quality"
+	assert "mid-abdomen" in verdict.notes
+	assert verdict.fix_negate == ["extreme sizes"]
+
+
+def test_plain_prompt_approval_skips_confirmation():
+	reviewer, completions = make_reviewer(["VERDICT: GOOD"])
+	verdict = run(reviewer.review(b"img", "woman in a green dress, garden"))
+	assert verdict.approved is True
+	assert len(completions.calls) == 1
+
+
+def test_confirmation_outage_fails_open():
+	reviewer, _ = make_reviewer(["VERDICT: GOOD", RuntimeError("grok down")])
+	verdict = run(reviewer.review(b"img", "woman, huge breasts, bedroom"))
+	assert verdict.approved is True
+	assert "confirmation unavailable" in verdict.notes
+
+
+def test_confirmation_can_be_disabled():
+	reviewer, completions = make_reviewer(["VERDICT: GOOD"])
+	reviewer.confirm_high_scrutiny = False
+	verdict = run(reviewer.review(b"img", "woman, huge breasts, bedroom"))
+	assert verdict.approved is True
+	assert len(completions.calls) == 1
+
+
 def test_qc_prompt_carries_casebook_hints():
 	from imagine_generator_proxy.review.openrouter import QC_PROMPT
 	# the evolving failure-mode casebook from rule_data.json is injected
