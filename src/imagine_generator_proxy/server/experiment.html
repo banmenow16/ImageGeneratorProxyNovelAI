@@ -43,6 +43,8 @@
 	.card.final-card { border-color: var(--final); box-shadow: 0 0 0 1px var(--final); }
 	.card img { width: 100%; height: auto; display: block; background: #0d0f12; min-height: 120px; }
 	.noimg { display: flex; align-items: center; justify-content: center; min-height: 200px; color: var(--muted); font-size: 13px; }
+	.noimg.pending { animation: pulse 1.4s ease-in-out infinite; }
+	@keyframes pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 	.card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 	.card-title { font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 	.card-title .badges { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -122,7 +124,7 @@ function badge(v) {
 function card(v) {
 	const img = v.image_url
 		? `<img src="${v.image_url}" loading="lazy" alt="${v.variant}">`
-		: `<div class="noimg">generation failed</div>`;
+		: `<div class="noimg${v.pending ? " pending" : ""}">${v.pending ? "generating…" : "generation failed"}</div>`;
 	const final = v.is_final ? '<span class="badge final">final</span>' : "";
 	return `<div class="card ${v.is_final ? "final-card" : ""}">
 		${img}
@@ -215,8 +217,10 @@ $("form").addEventListener("submit", async (ev) => {
 
 	const upsert = (v) => {
 		const i = liveVariants.findIndex(x => x.variant === v.variant);
-		if (i >= 0) liveVariants[i] = { ...liveVariants[i], ...v };
-		else liveVariants.push(v);
+		const merged = i >= 0 ? { ...liveVariants[i], ...v } : v;
+		if (merged.image_url) merged.pending = false;  // image on disk = no longer pending
+		if (i >= 0) liveVariants[i] = merged;
+		else liveVariants.push(merged);
 	};
 
 	const phaseText = {
@@ -230,8 +234,8 @@ $("form").addEventListener("submit", async (ev) => {
 			setStatus(`${phaseText[ev.phase] ? phaseText[ev.phase](ev) : ev.phase}`);
 			if (ev.phase === "generating") {
 				upsert({ variant: ev.variant, label: ev.label + " — generating…", image_url: null,
-					prompt: "", negative: "", approved: undefined, category: null, notes: "",
-					fix_applied: ev.fix_applied || "", is_final: false });
+					pending: true, prompt: "", negative: "", approved: undefined, category: null,
+					notes: "", fix_applied: ev.fix_applied || "", is_final: false });
 				renderLive();
 			}
 		} else if (ev.event === "image") {
