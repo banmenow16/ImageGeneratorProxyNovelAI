@@ -8,10 +8,34 @@ import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
+from urllib.parse import urlencode
 
 from aiohttp import web
 
+from imagine_generator_proxy.prompts.massager import (
+	DEFAULT_NEGATIVE_BLOCKS,
+	LEGACY_NEGATIVE_BLOCKS,
+)
+
 LOGGER = logging.getLogger(__name__)
+
+
+def query_negative_from_stored(stored: Optional[str]) -> str:
+	"""Recover the caller's query negative from a stored negative prompt.
+
+	Stored negatives are ", ".join(built-in blocks + rule negations + query
+	negative); prefilling the whole thing into the workbench would duplicate
+	the blocks. Strip whichever known block prefix matches and return the
+	remainder (rule negations like the solo guard may ride along — harmless).
+	"""
+	if not stored:
+		return ""
+	for blocks in (LEGACY_NEGATIVE_BLOCKS, DEFAULT_NEGATIVE_BLOCKS):
+		prefix = ", ".join(blocks) + ", "
+		if stored.startswith(prefix):
+			return stored[len(prefix):]
+	return stored
 
 _STYLE = """
 	:root { --bg:#14161a; --card:#22262e; --border:#333842; --text:#e6e9ee;
@@ -36,6 +60,9 @@ _STYLE = """
 	.prompt { font-family:Consolas,monospace; font-size:11.5px; line-height:1.45;
 		word-break:break-word; white-space:pre-wrap; }
 	.negative { color:var(--neg); opacity:.85; font-size:11px; }
+	.run-link { display:inline-block; background:rgba(110,168,254,.12); color:var(--accent);
+		border-radius:6px; padding:5px 10px; font-size:11.5px; font-weight:600; }
+	.run-link:hover { background:rgba(110,168,254,.22); }
 	.date { color:var(--muted); font-size:11px; margin-top:auto; }
 """
 
@@ -85,18 +112,19 @@ async def folder_handler(request: web.Request) -> web.Response:
 	if not char_dir.exists() or not char_dir.is_dir():
 		return web.Response(text="Folder not found", status=404)
 
-	# digest -> (prompt, negative_prompt, first_appearance)
+	# digest -> (prompt, negative_prompt, raw_prompt, first_appearance)
 	metadata: dict = {}
 	try:
 		conn = sqlite3.connect(str(request.app["db_path"]))
 		try:
 			cursor = conn.cursor()
 			cursor.execute(
-				"SELECT digest, prompt, negative_prompt, first_appearance FROM images WHERE character = ?",
+				"SELECT digest, prompt, negative_prompt, raw_prompt, first_appearance"
+				" FROM images WHERE character = ?",
 				(character,),
 			)
-			for digest, prompt, negative, first_appearance in cursor.fetchall():
-				metadata[digest] = (prompt, negative, first_appearance)
+			for digest, prompt, negative, raw_prompt, first_appearance in cursor.fetchall():
+				metadata[digest] = (prompt, negative, raw_prompt, first_appearance)
 		finally:
 			conn.close()
 	except Exception:
@@ -105,14 +133,14 @@ async def folder_handler(request: web.Request) -> web.Response:
 	images = []
 	for image_path in char_dir.glob("*.png"):
 		digest = image_path.stem
-		prompt, negative, first_appearance = metadata.get(digest, (None, None, None))
+		prompt, negative, raw_prompt, first_appearance = metadata.get(digest, (None, None, None, None))
 		mtime = datetime.fromtimestamp(image_path.stat().st_mtime).isoformat(sep=" ", timespec="minutes")
-		images.append((image_path.name, prompt, negative, first_appearance or mtime, image_path.stat().st_mtime))
+		images.append((image_path.name, prompt, negative, raw_prompt, first_appearance or mtime, image_path.stat().st_mtime))
 
-	images.sort(key=lambda item: item[4], reverse=True)
+	images.sort(key=lambda item: item[5], reverse=True)
 
 	cards = []
-	for filename, prompt, negative, date_label, _ in images:
+	for filename, prompt, negative, raw_prompt, date_label, _ in images:
 		prompt_html = (
 			f'<div><div class="label">prompt</div><div class="prompt">{_esc(prompt)}</div></div>'
 			if prompt else '<div><div class="label">prompt</div><div class="prompt">—</div></div>'
@@ -126,9 +154,18 @@ async def folder_handler(request: web.Request) -> web.Response:
 				f'<div><div class="label">negative</div><div class="prompt negative">{_esc(display)}</div></div>'
 				if display else ""
 			)
+		# one click from the gallery into a pre-filled workbench run: prefer
+		# the raw caller prompt (the workbench re-massages anyway) and only
+		# the caller's own query negative
+		experiment_href = "/experiment?" + urlencode({
+			"character": character,
+			"prompt": raw_prompt or prompt or "",
+			"negative": query_negative_from_stored(negative),
+		})
 		cards.append(
 			f'<div class="card"><img src="/cache/{_esc(character)}/{_esc(filename)}" alt="{_esc(filename)}">'
 			f'<div class="card-body">{prompt_html}{negative_html}'
+			f'<a class="run-link" href="{_esc(experiment_href)}">▶ run in experiment workbench</a>'
 			f'<div class="date">{_esc(date_label)}</div></div></div>'
 		)
 

@@ -290,6 +290,15 @@ $("form").addEventListener("submit", async (ev) => {
 	}
 });
 
+// Pre-fill from gallery links (/experiment?character=...&prompt=...&negative=...)
+(() => {
+	const params = new URLSearchParams(location.search);
+	if (params.get("character")) $("character").value = params.get("character");
+	if (params.get("prompt")) $("prompt").value = params.get("prompt");
+	if (params.get("negative")) $("negative").value = params.get("negative");
+	if (params.get("prompt")) setStatus("form pre-filled from a gallery image — adjust and run");
+})();
+
 loadHistory();
 </script>
 </body>

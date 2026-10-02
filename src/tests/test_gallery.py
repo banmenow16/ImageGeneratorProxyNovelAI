@@ -8,7 +8,12 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from imagine_generator_proxy.server.gallery import folder_handler, gallery_handler
+from imagine_generator_proxy.prompts.massager import LEGACY_NEGATIVE_BLOCKS
+from imagine_generator_proxy.server.gallery import (
+	folder_handler,
+	gallery_handler,
+	query_negative_from_stored,
+)
 
 
 class _FakeRequest:
@@ -23,11 +28,12 @@ def _make_app(tmp_path: Path) -> dict:
 	conn = sqlite3.connect(db)
 	conn.execute("""CREATE TABLE images (
 		id INTEGER PRIMARY KEY, character TEXT, digest TEXT UNIQUE, prompt TEXT,
-		negative_prompt TEXT, model TEXT,
+		negative_prompt TEXT, model TEXT, raw_prompt TEXT,
 		first_appearance TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-	conn.execute("INSERT INTO images (character, digest, prompt, negative_prompt) VALUES (?, ?, ?, ?)",
-		("Naimi", "abc123", "woman, <angle> brackets & quotes",
-		 "text, watermark, deformed, ugly, "))
+	conn.execute("INSERT INTO images (character, digest, prompt, negative_prompt, raw_prompt) VALUES (?, ?, ?, ?, ?)",
+		("Naimi", "abc123", "score_9, source_anime, woman, <angle> brackets & quotes",
+		 ", ".join(LEGACY_NEGATIVE_BLOCKS + [""]),  # realistic legacy shape (blocks + empty query)
+		 "woman, <angle> brackets & quotes"))
 	conn.commit()
 	conn.close()
 
@@ -51,10 +57,11 @@ def test_folder_page_shows_positive_and_negative(tmp_path: Path):
 	assert "woman" in body
 	assert "&lt;angle&gt;" in body and "<angle>" not in body
 	assert "&amp; quotes" in body
-	# negative prompt present, with the legacy trailing comma trimmed for display
+	# negative prompt present in full, with the legacy trailing comma trimmed
 	assert "negative" in body
-	assert "text, watermark, deformed, ugly" in body
-	assert "deformed, ugly, " not in body  # trailing ", " trimmed
+	assert "text, watermark, signature" in body  # legacy block 1
+	assert "deformed, ugly, blurry, lowres" in body  # legacy block 2
+	assert "unnatural proportions</div>" in body  # trailing ", " trimmed for display
 	# image without a DB row renders a not-recorded negative instead of crashing
 	assert "(not recorded)" in body
 
@@ -70,3 +77,41 @@ def test_folder_handler_404_for_unknown_character(tmp_path: Path):
 	app = _make_app(tmp_path)
 	response = run(folder_handler(_FakeRequest(app, {"character": "Nobody"})))
 	assert response.status == 404
+
+
+def test_card_links_to_prefilled_workbench(tmp_path: Path):
+	"""Each image card links to /experiment with the RAW prompt (not the
+	stored prefixed one) and only the caller's query negative."""
+	import re
+	from html import unescape
+	from urllib.parse import parse_qs, urlparse
+	response = run(folder_handler(_FakeRequest(_make_app(tmp_path), {"character": "Naimi"})))
+	body = response.text
+	hrefs = re.findall(r'href="(/experiment\?[^"]+)"', body)
+	assert hrefs, "no experiment link on the card"
+	# hrefs are HTML-escaped in the attribute (& -> &amp;); browsers decode
+	# that when parsing, so decode here too before checking the params
+	params = parse_qs(urlparse(unescape(hrefs[0])).query)
+	# raw prompt preferred over the stored prefixed one; character rides along
+	assert params["character"] == ["Naimi"]
+	assert params["prompt"] == ["woman, <angle> brackets & quotes"]
+	# only the caller's own query negative (here: empty), not the block stack
+	assert params.get("negative", [""]) == [""]
+
+
+def test_query_negative_recovery():
+	"""Only the caller's own negative is recovered from stored negatives."""
+	from imagine_generator_proxy.prompts.massager import (
+		DEFAULT_NEGATIVE_BLOCKS,
+		LEGACY_NEGATIVE_BLOCKS,
+	)
+	# legacy shape: blocks + empty query (trailing ", ")
+	legacy = ", ".join(LEGACY_NEGATIVE_BLOCKS + [""])
+	assert query_negative_from_stored(legacy) == ""
+	# default shape with a user query
+	stored = ", ".join(DEFAULT_NEGATIVE_BLOCKS + ["blurry face"])
+	assert query_negative_from_stored(stored) == "blurry face"
+	# unknown shape falls back to the stored text
+	assert query_negative_from_stored("something else") == "something else"
+	assert query_negative_from_stored("") == ""
+	assert query_negative_from_stored(None) == ""
