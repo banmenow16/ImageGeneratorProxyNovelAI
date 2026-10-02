@@ -28,7 +28,10 @@ def build_preset(model: ImageModel, add_quality_tags: bool) -> ImagePreset:
 	return preset
 
 
-class NovelAIGenerator:
+class NovelAIGenerator(ImageGenerator):
+	"""NovelAI backend; explicitly implements the ImageGenerator interface
+	(declaration-site conformance checking by mypy — the Python equivalent
+	of Java's `implements`)."""
 	"""NovelAI image generation behind a global lock with retry/backoff."""
 
 	def __init__(self, api: NovelAIAPI, config: dict, lock: Optional[asyncio.Lock] = None):

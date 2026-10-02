@@ -39,7 +39,8 @@ class Reviewer(Protocol):
 			previous_notes: str = "", character: str = "") -> Verdict: ...
 
 
-class NoopReviewer:
+class NoopReviewer(Reviewer):
+	"""Approves everything; explicitly implements the Reviewer interface."""
 	"""Approves everything; the default until a real reviewer exists."""
 
 	async def review(self, image: bytes, prompt: str, attempt: int = 0,

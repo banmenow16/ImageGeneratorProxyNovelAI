@@ -30,7 +30,7 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-from imagine_generator_proxy.review.base import Verdict
+from imagine_generator_proxy.review.base import Reviewer, Verdict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ def parse_assessment(text: str) -> Optional[str]:
 	return m.group(1).upper() if m else None
 
 
-class OpenRouterReviewer:
+class OpenRouterReviewer(Reviewer):
 	def __init__(self, api_key: str,
 			first_pass_model: str = DEFAULT_FIRST_PASS_MODEL,
 			escalation_model: str = DEFAULT_ESCALATION_MODEL,

@@ -29,6 +29,8 @@ pythonpath = ["src"]
 testpaths = ["src/tests"]
 
 [tool.mypy]
-python_version = "3.9"
+# The package still runs on 3.9+, but current mypy cannot emulate 3.9
+# semantics — 3.10 is the oldest it can check against.
+python_version = "3.10"
 ignore_missing_imports = true
 files = ["src/imagine_generator_proxy"]
