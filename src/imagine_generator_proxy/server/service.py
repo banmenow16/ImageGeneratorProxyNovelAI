@@ -251,11 +251,12 @@ class GenerationService:
 					"with fix tags" if (fix_add or fix_negate) else "with new seed",
 					request.character, digest[:12], attempt + 2, review_retries + 1,
 					(verdict.notes or "")[:200])
-				image = await self._generator.generate(attempt_prompt, attempt_negative,
+				regenerated = await self._generator.generate(attempt_prompt, attempt_negative,
 					prompt_is_complete=(version is not None))
-				if image is None:
+				if regenerated is None:
 					self._release_waiters(digest)
 					raise UpstreamBusyError()
+				image = regenerated
 
 		if verdict is not None and not verdict.approved:
 			LOGGER.warning("Reviewer still rejects on quality after retries — serving anyway")

@@ -31,7 +31,7 @@ def _payload_with_prompt(payload: dict, effective_prompt: Optional[str],
 	return payload
 
 
-def read_cached_image(cached_file: Path, want_raw: bool, context: str = None,
+def read_cached_image(cached_file: Path, want_raw: bool, context: Optional[str] = None,
 		effective_prompt: Optional[str] = None, massager_version: Optional[int] = None):
 	"""Return a web Response or JSON response for the cached file, or None if not available.
 

@@ -20,7 +20,7 @@ from novelai_api.NovelAI_API import NovelAIAPI
 
 from imagine_generator_proxy.generation import ImageGenerationType, NovelAIGenerator  # noqa: F401 (ImageGenerationType: future img2img/inpainting use)
 from imagine_generator_proxy.prompts import PromptMassager
-from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer
+from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer, Reviewer
 from imagine_generator_proxy.server import experiment, gallery
 from imagine_generator_proxy.server.service import (
 	GenerationRequest,
@@ -214,8 +214,9 @@ async def on_startup(app: web.Application) -> None:
 
 	# Post-generation reviewer: two-tier OpenRouter vision review when enabled
 	# in config (images are sent to OpenRouter); noop otherwise.
-	reviewer = OpenRouterReviewer.from_config(config, db_path=database.path) \
-		if config.get("vision_review") else NoopReviewer()
+	reviewer: Reviewer = NoopReviewer()
+	if config.get("vision_review"):
+		reviewer = OpenRouterReviewer.from_config(config, db_path=database.path) or NoopReviewer()
 	app["reviewer"] = reviewer
 
 	# The pipeline service owns the /generate flow end to end

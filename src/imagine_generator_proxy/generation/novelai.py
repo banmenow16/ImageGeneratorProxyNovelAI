@@ -93,7 +93,7 @@ class NovelAIGenerator:
 						continue
 					raise
 
-		if not generated:
+		if not generated or name is None or data is None:
 			return None
 
 		return GeneratedImage(name=name, data=data, seed=getattr(preset, "last_seed", None))

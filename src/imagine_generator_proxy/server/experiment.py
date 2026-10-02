@@ -196,7 +196,7 @@ class ExperimentRunner:
 				(character, raw_prompt, raw_negative),
 			)
 			conn.commit()
-			return int(cur.lastrowid)
+			return int(cur.lastrowid or 0)
 		finally:
 			conn.close()
 
@@ -226,7 +226,7 @@ class ExperimentRunner:
 					category, (notes or "")[-1000:], fix_applied, 1 if is_final else 0),
 			)
 			conn.commit()
-			return int(cur.lastrowid)
+			return int(cur.lastrowid or 0)
 		finally:
 			conn.close()
 

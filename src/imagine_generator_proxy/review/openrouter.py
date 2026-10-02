@@ -97,7 +97,8 @@ def parse_fix(text: str) -> tuple:
 	positive. Hard-capped and length-guarded so a chatty model can't smuggle
 	prose or huge lists into the prompt.
 	"""
-	add, negate = [], []
+	add: list = []
+	negate: list = []
 	matches = _FIX_RE.findall(text or "")
 	if not matches:
 		return add, negate
