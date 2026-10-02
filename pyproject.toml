@@ -9,7 +9,7 @@ authors = [ { name = "Your Name", email = "you@example.com" } ]
 dependencies = [
     "PyYAML>=6.0",
     "aiohttp>=3.8",
-    "novelai>=0.34.1",
+    "novelai-api>=0.34.1",
     "Pillow>=10",
     "openai>=1.0",
 ]

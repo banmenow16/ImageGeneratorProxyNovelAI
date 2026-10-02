@@ -2,31 +2,22 @@
 Start the ImagineGeneratorProxy server (PowerShell)
 
 Usage:
-  .\start_server.ps1 -Token '<token>' -Port 8080
-  # or rely on env vars:
-  $env:NOVELAI_ACCESS_TOKEN='token'; .\start_server.ps1
+  .\start_server.ps1 -Port 8088
+  # or rely on the PORT environment variable / config.yaml token
 #>
 
 param(
-    [string]$Token = $env:NOVELAI_ACCESS_TOKEN,
-    [string]$Email = $env:NOVELAI_EMAIL,
-    [string]$Password = $env:NOVELAI_PASSWORD,
-    [int]$Port = 8080
+    [int]$Port = 0
 )
 
-if ($Token) {
-    $env:NOVELAI_ACCESS_TOKEN = $Token
-} elseif ($Email -and $Password) {
-    $env:NOVELAI_EMAIL = $Email
-    $env:NOVELAI_PASSWORD = $Password
+if ($Port -gt 0) {
+    $env:PORT = $Port.ToString()
 }
 
-$env:PORT = $Port.ToString()
-
-Write-Host "Starting server on port $env:PORT..."
-$venv_python = Join-Path $PSScriptRoot 'imagine_generator_proxy\Scripts\python.exe'
-if (Test-Path $venv_python) {
-    & $venv_python -m imagine_generator_proxy.main
+Write-Host "Starting server on port $($env:PORT ?? '8080')..."
+$venvPython = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+if (Test-Path $venvPython) {
+    & $venvPython -m imagine_generator_proxy
 } else {
-    python -m imagine_generator_proxy.main
+    python -m imagine_generator_proxy
 }
