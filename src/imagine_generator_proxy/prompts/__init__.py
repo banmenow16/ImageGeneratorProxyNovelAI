@@ -5,6 +5,7 @@ from imagine_generator_proxy.prompts.massager import (
 	PromptMassager,
 	build_negative_prompt,
 	legacy_assemble,
+	strip_negative_leak,
 )
 from imagine_generator_proxy.prompts.rules import (
 	DATA,
@@ -17,5 +18,6 @@ from imagine_generator_proxy.prompts.rules import (
 
 __all__ = [
 	"MassagedPrompt", "PromptMassager", "build_negative_prompt", "legacy_assemble",
+	"strip_negative_leak",
 	"DATA", "NEGATIVE_VOCAB", "RULES", "RULES_VERSION", "LEGACY_QUALITY_PREFIX", "V45_QUALITY_SUFFIX",
 ]

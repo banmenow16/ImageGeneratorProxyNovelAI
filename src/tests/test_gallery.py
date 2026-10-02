@@ -94,3 +94,31 @@ def test_card_links_to_prefilled_workbench(tmp_path: Path):
 	# the FULL negative as displayed (trailing comma trimmed), not just the
 	# query negative — the user copies what the card shows
 	assert params["negative"] == [", ".join(LEGACY_NEGATIVE_BLOCKS)]
+
+
+def test_card_prefill_strips_negative_leak(tmp_path: Path):
+	"""Raw prompts often carry the SillyTavern 'negative:' leak inside the
+	positive; the prefill must not reproduce it in the workbench field."""
+	import re
+	from html import unescape
+	from urllib.parse import parse_qs, urlparse
+	app = _make_app(tmp_path)
+	import sqlite3
+	conn = sqlite3.connect(app["db_path"])
+	conn.execute("UPDATE images SET raw_prompt=? WHERE digest='abc123'",
+		("woman, red dress, negative: deformed, ugly, blurry, lowres",))
+	conn.commit()
+	conn.close()
+	response = run(folder_handler(_FakeRequest(app, {"character": "Naimi"})))
+	hrefs = re.findall(r'href="(/experiment\?[^"]+)"', response.text)
+	params = parse_qs(urlparse(unescape(hrefs[0])).query)
+	assert params["prompt"] == ["woman, red dress"]
+	assert "deformed" not in params["prompt"][0]
+
+
+def test_strip_negative_leak_helper():
+	from imagine_generator_proxy.prompts import strip_negative_leak
+	assert strip_negative_leak("girl, red dress, negative: deformed, ugly") == "girl, red dress"
+	assert strip_negative_leak("girl, masterpiece, best quality, deformed, ugly, blurry, lowres, extra limbs, outdoor") \
+		== "girl, masterpiece, best quality"
+	assert strip_negative_leak("girl, red dress") == "girl, red dress"

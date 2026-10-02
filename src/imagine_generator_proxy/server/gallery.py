@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 
 from aiohttp import web
 
+from imagine_generator_proxy.prompts import strip_negative_leak
+
 LOGGER = logging.getLogger(__name__)
 
 _STYLE = """
@@ -132,12 +134,14 @@ async def folder_handler(request: web.Request) -> web.Response:
 				if display else ""
 			)
 		# one click from the gallery into a pre-filled workbench run: prefer
-		# the raw caller prompt (the workbench re-massages anyway), and carry
-		# the negative exactly as the card displays it — matching the user's
-		# manual copy-paste workflow
+		# the raw caller prompt with the known SillyTavern negative-leak cut
+		# (raw prompts often carry 'negative: ...' inside the positive — the
+		# massager strips it at generation time, so strip it here too or the
+		# prefilled field reads as a bug), and carry the negative exactly as
+		# the card displays it — matching the manual copy-paste workflow
 		experiment_href = "/experiment?" + urlencode({
 			"character": character,
-			"prompt": raw_prompt or prompt or "",
+			"prompt": strip_negative_leak(raw_prompt or prompt or ""),
 			"negative": (negative or "").rstrip(", ").strip(),
 		})
 		cards.append(

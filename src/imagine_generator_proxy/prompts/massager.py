@@ -106,6 +106,24 @@ def _norm(tag: str) -> str:
 	return _normalize_tag(tag)[0]
 
 
+_LEAK_RULE_IDS = ("strip-negative-section", "strip-negative-vocab-run")
+
+
+def strip_negative_leak(prompt: str) -> str:
+	"""Apply ONLY the negative-leak cleanup rules (literal 'negative:' section
+	cut and bare negative-vocabulary run cut). Used where raw prompts are
+	displayed or prefilled: the leak is a known caller artifact, and showing
+	it (e.g. in the workbench positive field) reads as a bug. No enhance
+	additions, no safety behavior — this is a display cleanup."""
+	leak_rules = [r for r in prompt_rules.RULES
+		if r.get("id") in _LEAK_RULE_IDS and r.get("stage") == "cleanup"]
+	if not leak_rules:
+		return prompt
+	tags = [(t, _norm(t)) for t in _split_tags(prompt)]
+	PromptMassager(leak_rules, version=None)._run_stage("cleanup", tags, [], [])
+	return ", ".join(display for display, _ in tags)
+
+
 class PromptMassager:
 	def __init__(self, rules: List[dict], version: Optional[int], enabled: bool = True, safety_enabled: bool = True):
 		self.rules = rules
