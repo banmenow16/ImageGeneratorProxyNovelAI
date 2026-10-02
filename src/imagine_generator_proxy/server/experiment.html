@@ -145,11 +145,22 @@ function renderRun(run) {
 			<div class="row"><div class="k">effective negative</div><div class="mono">${esc(m.negative)}</div></div>
 			<div class="row"><div class="k">applied rules</div><div class="rules">${(m.applied_rules || []).map(r => `<span>${esc(r)}</span>`).join("") || "—"}</div></div>
 			<div class="row"><div class="k">removed</div><div class="rules">${(m.removed || []).map(r => `<span class="removed">${esc(r)}</span>`).join("") || "—"}</div></div>
-			<div class="row"><div class="k">rule version</div><div class="mono">pmv${m.version}</div></div>`;
+			<div class="row"><div class="k">rule version</div><div class="mono">pmv${m.version}</div></div>
+			<div class="row"><div class="k">vision review</div><div>${reviewStatus(run)}</div></div>`;
 	} else {
 		$("massager-sec").style.display = "none";
 	}
 	$("cards").innerHTML = (run.variants || []).map(card).join("");
+}
+
+function reviewStatus(run) {
+	if (run.reviewer_used === false) return '<span style="color:var(--warn)">inactive — attempts were not reviewed</span>';
+	const reviewed = (run.variants || []).filter(v => v.approved !== null && v.variant !== "raw");
+	if (!reviewed.length) return '<span style="color:var(--warn)">not run (reviewer unavailable or review unchecked)</span>';
+	const approved = reviewed.filter(v => v.approved).length;
+	const rejects = reviewed.length - approved;
+	return `<span style="color:var(--good)">active</span> — ${approved} approved, ${rejects} rejected across ${reviewed.length} reviewed attempt${reviewed.length > 1 ? "s" : ""}` +
+		(rejects ? " (fix/regenerate chain ran)" : " (passed on first attempt)");
 }
 
 async function loadHistory() {
