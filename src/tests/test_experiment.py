@@ -238,7 +238,80 @@ def test_db_serializer_roundtrip(tmp_path: Path):
 	assert payload is not None
 	labels = [v["label"] for v in payload["variants"]]
 	assert labels[0].startswith("Raw prompt")
-	assert "attempt 1" in labels[1]
-	assert "attempt 2" in labels[2] and "fix applied" in labels[2]
+	assert "Attempt 1" in labels[1] and "vision-reviewed" in labels[1]
+	assert "Attempt 2" in labels[2] and "review fixes: arms at sides" in labels[2]
 	finals = [v["variant"] for v in payload["variants"] if v["is_final"]]
 	assert finals == ["attempt-1"]
+
+
+def test_db_serializer_marks_cap_reached(tmp_path: Path):
+	"""History reloads label cap-stopped chains as still-rejected."""
+	fd, db = tempfile.mkstemp(suffix=".db", dir=str(tmp_path))
+	os.close(fd)
+	conn = sqlite3.connect(db)
+	ensure_db_schema(conn)
+	cur = conn.execute("INSERT INTO experiment_runs (character, raw_prompt, raw_negative)"
+		" VALUES ('Naimi', 'p', '')")
+	conn.commit()
+	run_id = cur.lastrowid
+	conn.execute("INSERT INTO experiment_images (run_id, variant, prompt_used, negative_used,"
+		" image_path, approved, category, notes, fix_applied, is_final)"
+		" VALUES (?, 'attempt-2', 'p', 'n', 'x.png', 0, 'quality', 'bad', '', 1)", (run_id,))
+	conn.commit()
+	payload = _run_payload(conn, run_id)
+	conn.close()
+	os.unlink(db)
+	assert "attempt cap reached" in payload["variants"][0]["label"]
+
+
+def test_live_event_stream_sequence(tmp_path: Path):
+	"""The on_event callback reports every pipeline step in order."""
+	gen = _StubGenerator()
+	reviewer = _ScriptedReviewer([
+		Verdict(approved=False, category="quality", notes="melted torso", fix_add=["arms at sides"]),
+		Verdict(approved=True),
+	])
+	runner = _make_runner(tmp_path, gen, reviewer)
+	events: list = []
+
+	async def collect(event):
+		events.append(event)
+
+	out = run(runner.run("Naimi", "massive breasts, sitting", do_massage=True,
+		do_review=True, max_attempts=5, on_event=collect))
+
+	assert "blocked" not in out
+	phases = [(e["event"], e.get("phase") or e.get("variant"), e.get("variant")) for e in events]
+	# ordered narrative: raw generate -> raw image -> attempt 1 generate ->
+	# image -> reviewing -> verdict(reject) -> attempt 2 generate -> image ->
+	# reviewing -> verdict(approve)
+	assert phases == [
+		("step", "generating", "raw"),
+		("image", "raw", "raw"),
+		("step", "generating", "attempt-0"),
+		("image", "attempt-0", "attempt-0"),
+		("step", "reviewing", "attempt-0"),
+		("verdict", "attempt-0", "attempt-0"),
+		("step", "generating", "attempt-1"),
+		("image", "attempt-1", "attempt-1"),
+		("step", "reviewing", "attempt-1"),
+		("verdict", "attempt-1", "attempt-1"),
+	]
+	# the rejection verdict carries the fix so the page can narrate it
+	reject = next(e for e in events if e["event"] == "verdict" and e["variant"] == "attempt-0")
+	assert reject["approved"] is False and reject["category"] == "quality"
+	# images arrive with a servable URL
+	first_image = next(e for e in events if e["event"] == "image")
+	assert first_image["image_url"].startswith("/cache/")
+
+
+def test_blocked_prompt_emits_blocked_event(tmp_path: Path):
+	gen = _StubGenerator()
+	runner = _make_runner(tmp_path, gen, _ScriptedReviewer([]))
+	events: list = []
+
+	async def collect(event):
+		events.append(event)
+
+	run(runner.run("Naimi", "cute loli", on_event=collect))
+	assert events and events[0]["event"] == "blocked"

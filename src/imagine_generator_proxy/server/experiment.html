@@ -205,23 +205,85 @@ $("form").addEventListener("submit", async (ev) => {
 	};
 	$("go").disabled = true;
 	startedAt = Date.now();
-	timer = setInterval(() => setStatus(`running… ${((Date.now() - startedAt) / 1000).toFixed(0)}s (a full chain can take a minute)`), 500);
-	setStatus("running…");
+	timer = setInterval(() => setStatus(`running… ${((Date.now() - startedAt) / 1000).toFixed(0)}s`), 500);
+	setStatus("starting…");
 	$("cards").innerHTML = "";
+	$("massager-sec").style.display = "none";
+	let liveVariants = [];
+
+	const renderLive = () => { $("cards").innerHTML = liveVariants.map(card).join(""); };
+
+	const upsert = (v) => {
+		const i = liveVariants.findIndex(x => x.variant === v.variant);
+		if (i >= 0) liveVariants[i] = { ...liveVariants[i], ...v };
+		else liveVariants.push(v);
+	};
+
+	const phaseText = {
+		generating: v => `generating ${v.variant === "raw" ? "raw baseline" : v.variant.replace("attempt-", "attempt ") + " "}…`,
+		reviewing: v => `vision-reviewing ${v.variant.replace("attempt-", "attempt ")}…`,
+		failed: v => `generation failed on ${v.variant} (NovelAI busy)`,
+	};
+
+	const handleEvent = (ev) => {
+		if (ev.event === "step") {
+			setStatus(`${phaseText[ev.phase] ? phaseText[ev.phase](ev) : ev.phase}`);
+			if (ev.phase === "generating") {
+				upsert({ variant: ev.variant, label: ev.label + " — generating…", image_url: null,
+					prompt: "", negative: "", approved: undefined, category: null, notes: "",
+					fix_applied: ev.fix_applied || "", is_final: false });
+				renderLive();
+			}
+		} else if (ev.event === "image") {
+			setStatus(`image ready (${ev.variant}) — ${ev.variant === "raw" ? "baseline stored" : "sending to reviewer…"}`);
+			upsert(ev);
+			renderLive();
+		} else if (ev.event === "verdict") {
+			const mood = ev.approved ? "✓ approved" : (ev.category === "minor" ? "age-flag — stopping" : "rejected — regenerating with fixes…");
+			setStatus(`verdict on ${ev.variant}: ${mood}`);
+			upsert(ev);
+			renderLive();
+		} else if (ev.event === "blocked") {
+			setStatus(`blocked by safety filter (${ev.rule}): ${ev.reason || ""}`, true);
+		} else if (ev.event === "done") {
+			const run = ev.run;
+			if (run && run.blocked) {
+				setStatus(`blocked by safety filter (${run.blocked.rule})`, true);
+			} else if (run) {
+				setStatus(`done in ${((Date.now() - startedAt) / 1000).toFixed(0)}s — run #${run.run_id}`);
+				renderRun(run);
+				loadHistory();
+			}
+		}
+	};
+
 	try {
-		const res = await fetch("/experiment/run", {
+		const res = await fetch("/experiment/run/stream", {
 			method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 		});
-		const data = await res.json();
-		if (!res.ok) {
-			setStatus(`error ${res.status}: ${data.error}${data.rule ? ` (rule: ${data.rule} — ${data.reason || ""})` : ""}`, true);
-		} else {
-			setStatus(`done in ${((Date.now() - startedAt) / 1000).toFixed(0)}s — run #${data.run_id}`);
-			renderRun(data);
-			loadHistory();
+		if (!res.ok || !res.body) {
+			const data = await res.json().catch(() => ({}));
+			setStatus(`error ${res.status}: ${data.error || "stream failed"}`, true);
+			return;
+		}
+		const reader = res.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			let nl;
+			while ((nl = buffer.indexOf("\n")) >= 0) {
+				const line = buffer.slice(0, nl).trim();
+				buffer = buffer.slice(nl + 1);
+				if (line) {
+					try { handleEvent(JSON.parse(line)); } catch (e) { /* skip malformed */ }
+				}
+			}
 		}
 	} catch (e) {
-		setStatus("request failed: " + e, true);
+		setStatus("stream failed: " + e, true);
 	} finally {
 		clearInterval(timer);
 		$("go").disabled = false;

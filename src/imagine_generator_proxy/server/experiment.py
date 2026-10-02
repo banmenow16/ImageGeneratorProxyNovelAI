@@ -15,6 +15,7 @@ untouched — experiments always generate fresh (no cache, no event dedup).
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from pathlib import Path
@@ -39,8 +40,27 @@ LOGGER = logging.getLogger(__name__)
 PAGE_PATH = Path(__file__).parent / "experiment.html"
 
 
+def _variant_label(variant: str, fix_applied: str = "") -> str:
+	"""Human label for an experiment image card. Shared by the live run and
+	the history serializer so the two never drift apart."""
+	if variant == "raw":
+		return "Raw prompt (legacy assembly, no massager, no review)"
+	n = int(variant.split("-")[1]) + 1
+	if n == 1:
+		return "Attempt 1 — massaged prompt, vision-reviewed"
+	suffix = f" (review fixes: {fix_applied})" if fix_applied else " (new seed)"
+	return f"Attempt {n} — regenerated after review rejection{suffix}"
+
+
 class ExperimentRunner:
-	"""Runs one full experiment: raw baseline + massaged review chain."""
+	"""Runs one full experiment: raw baseline + massaged review chain.
+
+	`on_event` (set per run) receives live progress events as dicts:
+	  step   — {phase: generating|reviewing|failed, variant, label, fix_applied}
+	  image  — a full variant payload, the moment its image is on disk
+	  verdict— {variant, approved, category, notes, is_final}
+	  blocked— {rule, reason}
+	"""
 
 	def __init__(self, massager: PromptMassager, generator: ImageGenerator,
 			reviewer: Optional[Reviewer], config: dict, cache_dir: Path,
@@ -51,22 +71,42 @@ class ExperimentRunner:
 		self._config = config
 		self._cache_dir = cache_dir
 		self._database = database
+		self._on_event = None
+
+	async def _emit(self, event: dict) -> None:
+		if self._on_event is not None:
+			try:
+				await self._on_event(event)
+			except Exception:
+				LOGGER.exception("Experiment event emission failed")
 
 	async def run(self, character: str, raw_prompt: str, q_negative: str = "",
-			do_massage: bool = True, do_review: bool = True, max_attempts: int = 5) -> dict:
+			do_massage: bool = True, do_review: bool = True, max_attempts: int = 5,
+			on_event=None) -> dict:
 		"""Execute one experiment. Returns a JSON-serializable dict.
 
 		The massaged chain iterates until the reviewer approves, the
 		age-safety filter trips (fail-closed), generation fails, or the
-		attempt cap is reached.
+		attempt cap is reached. `on_event` (async callable) receives live
+		progress events; see the class docstring.
 		"""
 		character = sanitize_character(character)
 		review_on = do_review and not isinstance(self._reviewer, NoopReviewer)
+		self._on_event = on_event
 
+		try:
+			return await self._run(character, raw_prompt, q_negative,
+				do_massage, do_review, review_on, max_attempts)
+		finally:
+			self._on_event = None
+
+	async def _run(self, character: str, raw_prompt: str, q_negative: str,
+			do_massage: bool, do_review: bool, review_on: bool, max_attempts: int) -> dict:
 		# Safety first, on every path — same policy as /generate.
 		blocked = self._massager.check_safety(raw_prompt)
 		if blocked is not None:
 			LOGGER.warning("Experiment blocked for character=%s rule=%s", character, blocked[0])
+			await self._emit({"event": "blocked", "rule": blocked[0], "reason": blocked[1]})
 			return {"blocked": {"rule": blocked[0], "reason": blocked[1]}}
 
 		run_id = self._record_run(character, raw_prompt, q_negative)
@@ -75,20 +115,26 @@ class ExperimentRunner:
 		# --- variant 1: raw baseline (legacy assembly + legacy negatives) ---
 		raw_effective = legacy_assemble(raw_prompt)
 		raw_negative = build_negative_prompt(q_negative, self._config, legacy=True)
+		raw_label = _variant_label("raw")
+		await self._emit({"event": "step", "phase": "generating", "variant": "raw", "label": raw_label})
 		image = await self._generator.generate(raw_effective, raw_negative, prompt_is_complete=False)
 		raw_rel: Optional[str] = None
 		if image is not None:
 			raw_rel = self._save_image(character, run_id, "raw", bytes(image.data))
 		else:
 			LOGGER.warning("Experiment %s: raw baseline generation failed (busy)", run_id)
+			await self._emit({"event": "step", "phase": "failed", "variant": "raw", "label": raw_label})
 		self._record_image(run_id, "raw", raw_effective, raw_negative, raw_rel,
 			None, None, "" if raw_rel else "generation failed (NovelAI busy)", "", False)
-		variants.append({
-			"variant": "raw", "label": "Raw prompt (legacy assembly, no massager, no review)",
+		raw_variant = {
+			"variant": "raw", "label": raw_label,
 			"image_url": f"/cache/{raw_rel}" if raw_rel else None,
 			"prompt": raw_effective, "negative": raw_negative,
 			"approved": None, "category": None, "notes": "", "fix_applied": "", "is_final": False,
-		})
+		}
+		variants.append(raw_variant)
+		if raw_rel:
+			await self._emit({"event": "image", **raw_variant})
 
 		# --- variants 2..n: massaged chain (review -> fix -> regenerate) ---
 		massager_info: Optional[dict] = None
@@ -127,14 +173,14 @@ class ExperimentRunner:
 		for attempt in range(max(1, max_attempts)):
 			variant = f"attempt-{attempt}"
 			if attempt == 0:
-				label = "Massaged prompt — attempt 1"
 				fix_applied = ""
 			else:
 				fix_applied = ", ".join(
 					[t for t in last_fix_add] + [f"neg:{t}" for t in last_fix_negate])
-				suffix = f" (fix: {fix_applied})" if fix_applied else " (new seed)"
-				label = f"Massaged prompt — attempt {attempt + 1}{suffix}"
+			label = _variant_label(variant, fix_applied)
 
+			await self._emit({"event": "step", "phase": "generating", "variant": variant,
+				"label": label, "fix_applied": fix_applied})
 			image = await self._generator.generate(attempt_prompt, chain_negative, prompt_is_complete=True)
 			if image is None:
 				self._record_image(run_id, variant, attempt_prompt, chain_negative, None,
@@ -143,6 +189,7 @@ class ExperimentRunner:
 					"prompt": attempt_prompt, "negative": chain_negative, "approved": None,
 					"category": None, "notes": "generation failed (NovelAI busy)",
 					"fix_applied": fix_applied, "is_final": False})
+				await self._emit({"event": "step", "phase": "failed", "variant": variant, "label": label})
 				break
 
 			rel = self._save_image(character, run_id, variant, bytes(image.data))
@@ -154,7 +201,18 @@ class ExperimentRunner:
 					"prompt": attempt_prompt, "negative": chain_negative, "approved": None,
 					"category": None, "notes": "reviewer unavailable (no OpenRouter key or review off)",
 					"fix_applied": fix_applied, "is_final": True})
+				await self._emit({"event": "image", "variant": variant, "label": label,
+					"image_url": f"/cache/{rel}", "prompt": attempt_prompt, "negative": chain_negative,
+					"approved": None, "category": None,
+					"notes": "reviewer unavailable (no OpenRouter key or review off)",
+					"fix_applied": fix_applied, "is_final": True})
 				break
+
+			await self._emit({"event": "image", "variant": variant, "label": label,
+				"image_url": f"/cache/{rel}", "prompt": attempt_prompt, "negative": chain_negative,
+				"approved": None, "category": None, "notes": "", "fix_applied": fix_applied,
+				"is_final": False})
+			await self._emit({"event": "step", "phase": "reviewing", "variant": variant, "label": label})
 
 			verdict: Verdict = await self._reviewer.review(bytes(image.data), attempt_prompt,
 				attempt=attempt, previous_notes=previous_notes, character=character)
@@ -172,6 +230,10 @@ class ExperimentRunner:
 				"prompt": attempt_prompt, "negative": chain_negative,
 				"approved": approved, "category": verdict.category,
 				"notes": verdict.notes or "", "fix_applied": fix_applied, "is_final": is_final})
+			await self._emit({"event": "verdict", "variant": variant, "label": label,
+				"approved": approved, "category": verdict.category,
+				"notes": verdict.notes or "", "is_final": is_final,
+				"fix_applied": fix_applied})
 
 			if approved:
 				break
@@ -255,11 +317,10 @@ def _variants_payload(conn: sqlite3.Connection, run_id: int) -> list:
 		"FROM experiment_images WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
 	out: list = []
 	for variant, prompt, negative, rel, approved, category, notes, fix_applied, is_final in rows:
-		if variant == "raw":
-			label = "Raw prompt (legacy assembly, no massager, no review)"
-		else:
-			n = int(variant.split("-")[1]) + 1
-			label = f"Massaged prompt — attempt {n}" + ("" if n == 1 else " (fix applied)")
+		label = _variant_label(variant, fix_applied or "")
+		# a terminal, still-rejected, non-safety card means the attempt cap hit
+		if is_final and approved == 0 and category != "minor" and variant != "raw":
+			label += " — attempt cap reached, still rejected"
 		out.append({
 			"variant": variant, "label": label,
 			"image_url": f"/cache/{rel}" if rel else None,
@@ -311,15 +372,18 @@ async def experiment_page_handler(request: web.Request) -> web.Response:
 	return web.Response(text=html, content_type="text/html")
 
 
-async def experiment_run_handler(request: web.Request) -> web.Response:
+async def _parse_run_body(request: web.Request):
+	"""Common request parsing for the run endpoints.
+
+	Returns (params dict, None) or (None, error response)."""
 	try:
 		body = await request.json()
 	except Exception:
-		return web.json_response({"error": "request body must be JSON"}, status=400)
+		return None, web.json_response({"error": "request body must be JSON"}, status=400)
 
 	raw_prompt = (body.get("prompt") or "").strip()
 	if not raw_prompt:
-		return web.json_response({"error": "missing 'prompt'"}, status=400)
+		return None, web.json_response({"error": "missing 'prompt'"}, status=400)
 
 	def _parse_attempts(body: dict) -> int:
 		"""Max generation attempts (1-10); accepts the legacy 'retries' key
@@ -333,18 +397,52 @@ async def experiment_run_handler(request: web.Request) -> web.Response:
 			pass
 		return 5
 
-	result = await _runner_from_app(request.app).run(
-		character=body.get("character") or "default",
-		raw_prompt=raw_prompt,
-		q_negative=body.get("negative") or "",
-		do_massage=bool(body.get("massage", True)),
-		do_review=bool(body.get("review", True)),
-		max_attempts=_parse_attempts(body),
-	)
+	params = {
+		"character": body.get("character") or "default",
+		"raw_prompt": raw_prompt,
+		"q_negative": body.get("negative") or "",
+		"do_massage": bool(body.get("massage", True)),
+		"do_review": bool(body.get("review", True)),
+		"max_attempts": _parse_attempts(body),
+	}
+	return params, None
+
+
+async def experiment_run_handler(request: web.Request) -> web.Response:
+	params, error = await _parse_run_body(request)
+	if error is not None:
+		return error
+
+	result = await _runner_from_app(request.app).run(**params)
 	if "blocked" in result:
 		return web.json_response({"error": "prompt blocked by safety filter", **result["blocked"]}, status=400)
 	result["reviewer_available"] = bool(request.app.get("experiment_reviewer"))
 	return web.json_response(result)
+
+
+async def experiment_run_stream_handler(request: web.Request) -> web.StreamResponse:
+	"""Live version of /experiment/run: newline-delimited JSON events as the
+	pipeline progresses (step / image / verdict / blocked), then one final
+	'done' event carrying the full run payload."""
+	params, error = await _parse_run_body(request)
+	if error is not None:
+		return error
+
+	response = web.StreamResponse(headers={
+		"Content-Type": "application/x-ndjson",
+		"Cache-Control": "no-cache",
+		"X-Accel-Buffering": "no",
+	})
+	await response.prepare(request)
+
+	async def on_event(event: dict) -> None:
+		await response.write((json.dumps(event) + "\n").encode("utf-8"))
+
+	result = await _runner_from_app(request.app).run(**params, on_event=on_event)
+	result["reviewer_available"] = bool(request.app.get("experiment_reviewer"))
+	await response.write((json.dumps({"event": "done", "run": result}) + "\n").encode("utf-8"))
+	await response.write_eof()
+	return response
 
 
 async def experiment_runs_handler(request: web.Request) -> web.Response:
@@ -386,6 +484,7 @@ async def experiment_run_detail_handler(request: web.Request) -> web.Response:
 def add_routes(app: web.Application) -> None:
 	app.router.add_get("/experiment", experiment_page_handler)
 	app.router.add_post("/experiment/run", experiment_run_handler)
+	app.router.add_post("/experiment/run/stream", experiment_run_stream_handler)
 	app.router.add_get("/experiment/runs", experiment_runs_handler)
 	app.router.add_get("/experiment/run/{run_id}", experiment_run_detail_handler)
 
