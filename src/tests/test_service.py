@@ -144,18 +144,45 @@ def test_busy_upstream_raises_and_releases_waiters(tmp_path: Path):
 	assert service._generations == {}
 
 
-def test_minor_rejection_is_fail_closed(tmp_path: Path):
+def test_minor_rejection_remediates_then_refuses_at_exhaustion(tmp_path: Path):
+	"""A minor-flag regenerates with adult-reinforcement fixes; if it persists
+	to the last attempt, the image is refused (fail-closed at exhaustion)."""
 	gen = _StubGenerator()
-	reviewer = _ScriptedReviewer([Verdict(approved=False, category="minor", notes="flagged")])
-	service = _make_service(tmp_path, gen, reviewer, config={"vision_review": True})
+	reviewer = _ScriptedReviewer([
+		Verdict(approved=False, category="minor", notes="childlike",
+			fix_add=["adult woman"], fix_negate=["chibi"]),
+		Verdict(approved=False, category="minor", notes="still childlike",
+			fix_add=["adult woman"], fix_negate=["chibi"]),
+	])
+	service = _make_service(tmp_path, gen, reviewer, config={"vision_review": True, "vision_review_retries": 1})
 
 	with pytest.raises(ImageRejectedError):
 		run(service.generate(_request(force=True)))
-	# the rejection was logged for the hint history
+	# it retried with the age fixes before refusing
+	assert gen.calls == 2
+	assert "adult woman" in gen.prompts[1][0]
+	assert "chibi" in gen.prompts[1][1]
+	# both rejections were logged for the hint history
 	conn = service._database.connect()
-	row = conn.execute("SELECT approved, category FROM reviews").fetchone()
+	rows = conn.execute("SELECT approved, category FROM reviews ORDER BY id").fetchall()
 	conn.close()
-	assert row == (0, "minor")
+	assert rows == [(0, "minor"), (0, "minor")]
+
+
+def test_minor_then_quality_rejection_still_fail_open(tmp_path: Path):
+	"""Quality exhaustion after an earlier age-flag serves the image — the
+	fail-closed rule applies to the FINAL verdict only."""
+	gen = _StubGenerator()
+	reviewer = _ScriptedReviewer([
+		Verdict(approved=False, category="minor", notes="childlike",
+			fix_add=["adult woman"], fix_negate=[]),
+		Verdict(approved=False, category="quality", notes="hands"),
+	])
+	service = _make_service(tmp_path, gen, reviewer, config={"vision_review": True, "vision_review_retries": 1})
+
+	response = run(service.generate(_request(force=True)))
+	assert response.status == 200
+	assert gen.calls == 2
 
 
 def test_quality_rejection_applies_fixes_and_retries(tmp_path: Path):

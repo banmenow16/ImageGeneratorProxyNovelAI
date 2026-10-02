@@ -76,13 +76,24 @@ AGE_PROMPT = (
 	"proportions. WARNING on calibration: anime stylization (very large eyes, small "
 	"nose, smooth skin) is an art style, not an age indicator — do not flag adults "
 	"merely for looking stylized. Respond with exactly one line: "
-	"'ASSESSMENT: ADULT', 'ASSESSMENT: MINOR', or 'ASSESSMENT: AMBIGUOUS'."
+	"'ASSESSMENT: ADULT', 'ASSESSMENT: MINOR', or 'ASSESSMENT: AMBIGUOUS'. "
+	"When (and only when) your assessment is MINOR or AMBIGUOUS, add one final line "
+	"'AGEFIX: <comma-separated entries>' proposing prompt repairs that would make ALL "
+	"figures read unambiguously as adults on a regeneration: plain entries add tags to "
+	"the positive prompt (e.g. 'adult woman', 'mature proportions', 'tall figure'), "
+	"'neg:<tag>' entries go to the negative prompt (e.g. 'neg:chibi', "
+	"'neg:childlike proportions', 'neg:small stature'). Max 6 entries."
 )
 
 _VERDICT_RE = re.compile(r"VERDICT:\s*(GOOD|BAD|SKIP_MINOR)", re.IGNORECASE)
 _FIX_RE = re.compile(r"^FIX:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+_AGEFIX_RE = re.compile(r"^AGEFIX:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 MAX_FIX_TAGS = 6
 MAX_FIX_TAG_LEN = 60
+
+# fallback age-correction prescription when an AGEFIX line is missing
+DEFAULT_AGE_FIX_ADD = ["adult woman", "mature proportions"]
+DEFAULT_AGE_FIX_NEGATE = ["chibi", "childlike proportions", "small stature"]
 
 
 def parse_verdict(text: str) -> Optional[str]:
@@ -96,11 +107,12 @@ def parse_fix(text: str) -> tuple:
 
 	'neg:<tag>' entries go to the negative prompt; plain entries to the
 	positive. Hard-capped and length-guarded so a chatty model can't smuggle
-	prose or huge lists into the prompt.
+	prose or huge lists into the prompt. Also parses AGEFIX lines (same
+	entry syntax, produced by the age escalation).
 	"""
 	add: list = []
 	negate: list = []
-	matches = _FIX_RE.findall(text or "")
+	matches = (_AGEFIX_RE.findall(text or "") or _FIX_RE.findall(text or ""))
 	if not matches:
 		return add, negate
 	for entry in matches[-1].split(","):
@@ -261,13 +273,21 @@ class OpenRouterReviewer(Reviewer):
 			except Exception as e:
 				LOGGER.error("Age escalation failed (%s); refusing (fail-closed)", e)
 				return Verdict(approved=False, category="minor",
-					notes=f"first-pass flagged minor; escalation failed: {e}")
+					notes=f"first-pass flagged minor; escalation failed: {e}",
+					fix_add=list(DEFAULT_AGE_FIX_ADD), fix_negate=list(DEFAULT_AGE_FIX_NEGATE))
 			assessment = parse_assessment(escalation)
 			if assessment == "ADULT":
 				LOGGER.info("Age check: first pass flagged, escalation cleared — approved")
 				return Verdict(approved=True, notes=f"age cleared by {self.escalation_model}")
-			# MINOR, AMBIGUOUS, or unparsable -> fail-closed
-			return Verdict(approved=False, category="minor", notes=escalation[-400:])
+			# MINOR, AMBIGUOUS, or unparsable -> rejected, carrying the
+			# escalation's AGEFIX prescription (or fallback defaults) so the
+			# caller can regenerate with adult-reinforcing tags instead of
+			# stopping. The image itself is still never approved.
+			fix_add, fix_negate = parse_fix(escalation)
+			if not fix_add and not fix_negate:
+				fix_add, fix_negate = list(DEFAULT_AGE_FIX_ADD), list(DEFAULT_AGE_FIX_NEGATE)
+			return Verdict(approved=False, category="minor", notes=escalation[-400:],
+				fix_add=fix_add, fix_negate=fix_negate)
 		if verdict == "BAD":
 			fix_add, fix_negate = parse_fix(first)
 			return Verdict(approved=False, category="quality", notes=first[-400:],

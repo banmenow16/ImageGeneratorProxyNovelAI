@@ -221,9 +221,10 @@ class ExperimentRunner:
 
 			at_cap = attempt >= max_attempts - 1
 			approved = bool(verdict.approved)
-			is_final = approved or verdict.category == "minor" or at_cap
-			if is_final and not approved and verdict.category != "minor":
-				label += " — attempt cap reached, still rejected"
+			is_final = approved or at_cap
+			if is_final and not approved:
+				label += " — attempt cap reached, still age-flagged" if verdict.category == "minor" \
+					else " — attempt cap reached, still rejected"
 			self._record_image(run_id, variant, attempt_prompt, chain_negative, rel,
 				approved, verdict.category, verdict.notes, fix_applied, is_final)
 			variants.append({"variant": variant, "label": label, "image_url": f"/cache/{rel}",
@@ -239,8 +240,12 @@ class ExperimentRunner:
 				break
 			previous_notes = verdict.notes or ""
 			if verdict.category == "minor":
-				LOGGER.warning("Experiment %s: minor-flag on attempt %d — stopping chain", run_id, attempt + 1)
-				break
+				# remediate instead of aborting: apply the age-correction fixes
+				# (adult-reinforcing tags) and regenerate. A minor-flagged image
+				# is still never approved — if the cap arrives while flagged,
+				# the chain ends rejected.
+				LOGGER.warning("Experiment %s: minor-flag on attempt %d — regenerating with age fixes",
+					run_id, attempt + 1)
 			if at_cap:
 				LOGGER.warning("Experiment %s: attempt cap (%d) reached without approval", run_id, max_attempts)
 				break
@@ -318,9 +323,10 @@ def _variants_payload(conn: sqlite3.Connection, run_id: int) -> list:
 	out: list = []
 	for variant, prompt, negative, rel, approved, category, notes, fix_applied, is_final in rows:
 		label = _variant_label(variant, fix_applied or "")
-		# a terminal, still-rejected, non-safety card means the attempt cap hit
-		if is_final and approved == 0 and category != "minor" and variant != "raw":
-			label += " — attempt cap reached, still rejected"
+		# a terminal still-rejected card means the attempt cap hit
+		if is_final and approved == 0 and variant != "raw":
+			label += " — attempt cap reached, still age-flagged" if category == "minor" \
+				else " — attempt cap reached, still rejected"
 		out.append({
 			"variant": variant, "label": label,
 			"image_url": f"/cache/{rel}" if rel else None,

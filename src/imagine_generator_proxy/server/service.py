@@ -231,8 +231,9 @@ class GenerationService:
 				return image
 			previous_notes = verdict.notes or ""
 
-			if verdict.category == "minor":
-				LOGGER.warning("Reviewer minor-flag (notes=%s) — refusing to serve",
+			if verdict.category == "minor" and attempt >= review_retries:
+				# out of attempts while age-flagged: fail-closed, never served
+				LOGGER.warning("Reviewer minor-flag persists after retries (notes=%s) — refusing to serve",
 					(verdict.notes or "")[:200])
 				self._release_waiters(digest)
 				raise ImageRejectedError(verdict.notes or "age-safety review")
@@ -246,11 +247,12 @@ class GenerationService:
 				if fix_negate:
 					attempt_negative = attempt_negative + ", " + ", ".join(fix_negate)
 					LOGGER.info("Applying reviewer fix negatives: %s", ", ".join(fix_negate))
-				LOGGER.warning("REGENERATING %s for character=%s digest=%s attempt=%d/%d "
-					"(reviewer rejected on quality: %s)",
+				reason = "age-flag, applying adult-reinforcement fixes" if verdict.category == "minor" \
+					else "reviewer rejected on quality"
+				LOGGER.warning("REGENERATING %s for character=%s digest=%s attempt=%d/%d (%s: %s)",
 					"with fix tags" if (fix_add or fix_negate) else "with new seed",
 					request.character, digest[:12], attempt + 2, review_retries + 1,
-					(verdict.notes or "")[:200])
+					reason, (verdict.notes or "")[:200])
 				regenerated = await self._generator.generate(attempt_prompt, attempt_negative,
 					prompt_is_complete=(version is not None))
 				if regenerated is None:

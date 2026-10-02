@@ -118,19 +118,46 @@ def test_quality_rejection_chain_applies_fixes(tmp_path: Path):
 	assert "melted torso" in reviewer.contexts[1][1]
 
 
-def test_minor_flag_stops_chain_fail_closed(tmp_path: Path):
+def test_minor_flag_remediates_instead_of_stopping(tmp_path: Path):
+	"""A minor-flag regenerates with the age-correction fixes instead of
+	aborting the chain (experiment 21: a chibi render killed the run)."""
 	gen = _StubGenerator()
 	reviewer = _ScriptedReviewer([
-		Verdict(approved=False, category="minor", notes="age assessment failed"),
+		Verdict(approved=False, category="minor", notes="carried figure reads childlike",
+			fix_add=["adult woman", "mature proportions"], fix_negate=["chibi"]),
+		Verdict(approved=True),
 	])
 	runner = _make_runner(tmp_path, gen, reviewer)
 
-	out = run(runner.run("Naimi", "woman, red dress", do_massage=True, do_review=True, max_attempts=5))
+	out = run(runner.run("Naimi", "Artemis carrying a small injured woman on her back",
+		do_massage=True, do_review=True, max_attempts=5))
 
-	assert len(out["variants"]) == 2  # raw + attempt-0 only — chain stopped
-	assert out["variants"][1]["category"] == "minor"
-	assert out["variants"][1]["is_final"] is True  # terminal, but rejected
-	assert gen.calls == 2
+	assert len(out["variants"]) == 3  # raw + attempt-0 (age-flag) + attempt-1
+	a1 = out["variants"][2]
+	assert a1["approved"] is True and a1["is_final"] is True
+	# the age fixes reached the regenerated prompt
+	assert "adult woman" in gen.prompts[2][0]
+	assert "chibi" in gen.prompts[2][1]
+
+
+def test_minor_flag_at_cap_stays_rejected(tmp_path: Path):
+	"""If every attempt age-flags, the chain ends terminal-rejected — a
+	minor-flagged image is never approved, remediation or not."""
+	gen = _StubGenerator()
+	reviewer = _ScriptedReviewer([
+		Verdict(approved=False, category="minor", notes="still childlike",
+			fix_add=["adult woman"], fix_negate=[])
+		for _ in range(5)
+	])
+	runner = _make_runner(tmp_path, gen, reviewer)
+
+	out = run(runner.run("Naimi", "test", do_massage=True, do_review=True, max_attempts=3))
+
+	last = out["variants"][-1]
+	assert last["approved"] is False
+	assert last["category"] == "minor"
+	assert last["is_final"] is True
+	assert "age-flagged" in last["label"]
 
 
 def test_safety_block_refuses_whole_experiment(tmp_path: Path):

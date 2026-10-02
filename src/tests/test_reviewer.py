@@ -102,6 +102,19 @@ def test_minor_flag_confirmed_by_escalation():
 	verdict = run(reviewer.review(b"img", "prompt"))
 	assert verdict.approved is False
 	assert verdict.category == "minor"
+	# minor verdicts carry an age-correction prescription for regeneration
+	assert verdict.fix_add and verdict.fix_negate
+
+
+def test_agefix_prescription_parsed_from_escalation():
+	reviewer, _ = make_reviewer([
+		"VERDICT: SKIP_MINOR",
+		"ASSESSMENT: MINOR\nAGEFIX: adult woman, mature proportions, neg:chibi, neg:childlike proportions",
+	])
+	verdict = run(reviewer.review(b"img", "prompt"))
+	assert verdict.approved is False
+	assert verdict.fix_add == ["adult woman", "mature proportions"]
+	assert verdict.fix_negate == ["chibi", "childlike proportions"]
 
 
 def test_ambiguous_age_fails_closed():
@@ -112,6 +125,7 @@ def test_ambiguous_age_fails_closed():
 	verdict = run(reviewer.review(b"img", "prompt"))
 	assert verdict.approved is False
 	assert verdict.category == "minor"
+	assert verdict.fix_add  # fallback prescription applied
 
 
 def test_escalation_error_fails_closed():
@@ -122,6 +136,7 @@ def test_escalation_error_fails_closed():
 	verdict = run(reviewer.review(b"img", "prompt"))
 	assert verdict.approved is False
 	assert verdict.category == "minor"
+	assert verdict.fix_add  # fallback prescription applied
 
 
 def test_first_pass_error_fails_open():
