@@ -204,8 +204,8 @@ def test_confirmation_can_be_disabled():
 def test_qc_prompt_carries_casebook_hints():
 	from imagine_generator_proxy.review.openrouter import QC_PROMPT
 	# the evolving failure-mode casebook from rule_data.json is injected
-	assert "failure modes" in QC_PROMPT
-	assert "fused or extra fingers" in QC_PROMPT
+	# (structural check: not coupled to any particular hint's wording)
+	assert "Known recurring failure modes" in QC_PROMPT
 
 
 # --- session context (regeneration attempt chains) ---
