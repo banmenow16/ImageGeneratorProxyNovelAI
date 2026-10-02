@@ -40,9 +40,19 @@ except Exception:
 
 LOGGER = logging.getLogger(__name__)
 
-# Resource files (config.yaml, cache/, images.db, logs/) live at the package
-# root, one level above this server/ subpackage.
-PACKAGE_ROOT = Path(__file__).parent.parent
+
+def _default_data_dir() -> Path:
+	"""Runtime data location: the repo's data/ directory for source
+	checkouts, or IGP_DATA_DIR for pip-installed deployments."""
+	env = os.environ.get("IGP_DATA_DIR")
+	if env:
+		return Path(env)
+	return Path(__file__).parents[3] / "data"
+
+
+# Runtime data (config.yaml, cache/, images.db, logs/) lives OUTSIDE the
+# package in data/, keeping src/ pure code.
+DATA_DIR = _default_data_dir()
 
 
 def configure_logging() -> None:
@@ -50,7 +60,7 @@ def configure_logging() -> None:
 		return
 
 	log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-	log_dir = PACKAGE_ROOT / "logs"
+	log_dir = DATA_DIR / "logs"
 	log_dir.mkdir(parents=True, exist_ok=True)
 	formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -137,7 +147,7 @@ async def generate_handler(request: web.Request) -> web.Response:
 def load_config() -> dict:
 	"""Load config.yaml at the package root (PyYAML, with a flat key:value
 	fallback parser when PyYAML is unavailable)."""
-	cfg_path = PACKAGE_ROOT / "config.yaml"
+	cfg_path = DATA_DIR / "config.yaml"
 	if not cfg_path.exists():
 		return {}
 
@@ -182,21 +192,21 @@ async def on_startup(app: web.Application) -> None:
 	# Global lock: one NovelAI call at a time
 	app["generate_lock"] = asyncio.Lock()
 
-	cache_dir = PACKAGE_ROOT / "cache"
+	cache_dir = DATA_DIR / "cache"
 	try:
 		cache_dir.mkdir(parents=True, exist_ok=True)
 	except Exception:
 		LOGGER.exception("Failed to create cache directory")
 	app["cache_dir"] = cache_dir
 
-	database = Database(PACKAGE_ROOT / "images.db")
+	database = Database(DATA_DIR / "images.db")
 	database.initialize()
 	app["db_path"] = database.path
 
 	config = load_config()
 	app["config"] = config
 
-	massager = PromptMassager.from_config(config, PACKAGE_ROOT)
+	massager = PromptMassager.from_config(config, DATA_DIR)
 	app["massager"] = massager
 
 	generator = NovelAIGenerator(api, config, lock=app["generate_lock"])
@@ -242,7 +252,7 @@ def create_app() -> web.Application:
 	app.router.add_get("/generate", generate_handler)
 	app.router.add_get("/", gallery.gallery_handler)
 	app.router.add_get("/folder/{character}", gallery.folder_handler)
-	app.router.add_static("/cache", str(PACKAGE_ROOT / "cache"))
+	app.router.add_static("/cache", str(DATA_DIR / "cache"))
 	experiment.add_routes(app)
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)

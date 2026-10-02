@@ -7,6 +7,7 @@ env/
 __pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
 
 # Distribution
 build/
@@ -17,21 +18,20 @@ dist/
 .vscode/
 .idea/
 
-# Local config and cache
+# Runtime data (moved to data/ — never commit secrets or generated images)
+data/
+test.html
+
+# Legacy paths from before the src/ layout (harmless if they reappear)
 imagine_generator_proxy/config.yaml
 imagine_generator_proxy/cache/
-imagine_generator_proxy/pyvenv.cfg
-*.log
-test.html
+imagine_generator_proxy/images.db
 
 # Virtualenv internals
 pyvenv.cfg
 pip-selfcheck.json
 .Python
-
-# Ignore venv internal directories anywhere in the tree
 **/Include/
 **/Lib/
 **/Scripts/
 **/bin/
-imagine_generator_proxy/images.db

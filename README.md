@@ -32,13 +32,14 @@ Optional flags: `--port 8099` and `--host 127.0.0.1` (port also read from the
 | `POST /experiment/run` | JSON API behind the workbench. |
 | `GET /experiment/runs`, `/experiment/run/{id}` | Experiment history. |
 
-## Configuration (`imagine_generator_proxy/config.yaml`, gitignored)
+## Configuration (`data/config.yaml`, gitignored)
 
-Copy `config.example.yaml` to start. Keys: `token` (NovelAI), generation
-settings (`generation_retries`, `generation_backoff`, `generation_min_interval`),
-massager toggles (`prompt_massage`, `safety_filter`, `negative_prompt`,
-`rules_file`), and vision review (`openRouterToken`, `vision_review`,
-`reviewer_model`, `reviewer_escalation_model`, `vision_review_retries`).
+Copy `src/imagine_generator_proxy/config.example.yaml` to `data/config.yaml` to
+start. Keys: `token` (NovelAI), generation settings (`generation_retries`,
+`generation_backoff`, `generation_min_interval`), massager toggles
+(`prompt_massage`, `safety_filter`, `negative_prompt`, `rules_file`), and
+vision review (`openRouterToken`, `vision_review`, `reviewer_model`,
+`reviewer_escalation_model`, `vision_review_retries`).
 
 **Vision review is off by default.** Enabling it sends every generated image to
 OpenRouter for quality/age review (~$0.001–0.01 per generation) and can
@@ -47,17 +48,26 @@ regenerate rejected images.
 ## Architecture
 
 ```
-imagine_generator_proxy/
-	generation/   base.py (ImageGenerator protocol) · novelai.py (backend)
-	prompts/      massager.py (safety → cleanup → enhance) · rules.py · rule_data.json
-	review/       base.py (Reviewer protocol) · openrouter.py (two-tier vision QC)
-	server/       app.py (app factory + /generate) · experiment.py/.html (workbench)
-	              gallery.py · cache.py (cache responses) · storage.py (DB)
+src/                                ← all code
+	imagine_generator_proxy/
+		generation/   base.py (ImageGenerator protocol) · novelai.py (backend)
+		prompts/      massager.py (safety → cleanup → enhance) · rules.py · rule_data.json
+		review/       base.py (Reviewer protocol) · openrouter.py (two-tier vision QC)
+		server/       app.py (app factory) · service.py (GenerationService)
+		              experiment.py/.html (workbench) · gallery.py
+		              cache.py (cache responses) · storage.py (Database)
+	tests/
+
+data/                               ← runtime (created on first run, gitignored)
+	config.yaml · images.db · cache/ · logs/
 ```
 
 `ImageGenerator` and `Reviewer` are backend-neutral protocols — alternative
 generation backends (e.g. Civitai or local model servers) or reviewers slot
-in as sibling modules without touching the server layer.
+in as sibling modules without touching the server layer. Domain logic lives
+in `GenerationService` (constructor-injected collaborators, typed exceptions
+mapped to HTTP statuses by thin handlers). For pip-installed deployments,
+point `IGP_DATA_DIR` at your data directory.
 
 Safety filter: prompts with minor-coded content are refused (HTTP 400) before
 any generation; age-flagged *images* are refused (HTTP 422) after two-model
