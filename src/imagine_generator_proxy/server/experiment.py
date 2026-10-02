@@ -53,8 +53,13 @@ class ExperimentRunner:
 		self._database = database
 
 	async def run(self, character: str, raw_prompt: str, q_negative: str = "",
-			do_massage: bool = True, do_review: bool = True, retries: int = 1) -> dict:
-		"""Execute one experiment. Returns a JSON-serializable dict."""
+			do_massage: bool = True, do_review: bool = True, max_attempts: int = 5) -> dict:
+		"""Execute one experiment. Returns a JSON-serializable dict.
+
+		The massaged chain iterates until the reviewer approves, the
+		age-safety filter trips (fail-closed), generation fails, or the
+		attempt cap is reached.
+		"""
 		character = sanitize_character(character)
 		review_on = do_review and not isinstance(self._reviewer, NoopReviewer)
 
@@ -101,7 +106,7 @@ class ExperimentRunner:
 				"negative_additions": result.negative_additions,
 			}
 			variants += await self._massaged_chain(run_id, character, result,
-				chain_negative, review_on, retries)
+				chain_negative, review_on, max_attempts)
 
 		return {
 			"run_id": run_id,
@@ -112,14 +117,14 @@ class ExperimentRunner:
 		}
 
 	async def _massaged_chain(self, run_id: int, character: str, result: MassagedPrompt,
-			chain_negative: str, review_on: bool, retries: int) -> list:
+			chain_negative: str, review_on: bool, max_attempts: int) -> list:
 		variants: list = []
 		attempt_prompt = result.effective
 		previous_notes = ""
 		last_fix_add: list = []
 		last_fix_negate: list = []
 
-		for attempt in range(max(0, retries) + 1):
+		for attempt in range(max(1, max_attempts)):
 			variant = f"attempt-{attempt}"
 			if attempt == 0:
 				label = "Massaged prompt — attempt 1"
@@ -156,21 +161,26 @@ class ExperimentRunner:
 			LOGGER.info("Experiment %s %s: approved=%s category=%s",
 				run_id, variant, verdict.approved, verdict.category)
 
-			is_final = verdict.approved or verdict.category == "minor" or attempt >= retries
+			at_cap = attempt >= max_attempts - 1
+			approved = bool(verdict.approved)
+			is_final = approved or verdict.category == "minor" or at_cap
+			if is_final and not approved and verdict.category != "minor":
+				label += " — attempt cap reached, still rejected"
 			self._record_image(run_id, variant, attempt_prompt, chain_negative, rel,
-				verdict.approved, verdict.category, verdict.notes, fix_applied, is_final)
+				approved, verdict.category, verdict.notes, fix_applied, is_final)
 			variants.append({"variant": variant, "label": label, "image_url": f"/cache/{rel}",
 				"prompt": attempt_prompt, "negative": chain_negative,
-				"approved": verdict.approved, "category": verdict.category,
+				"approved": approved, "category": verdict.category,
 				"notes": verdict.notes or "", "fix_applied": fix_applied, "is_final": is_final})
 
-			if verdict.approved:
+			if approved:
 				break
 			previous_notes = verdict.notes or ""
 			if verdict.category == "minor":
 				LOGGER.warning("Experiment %s: minor-flag on attempt %d — stopping chain", run_id, attempt + 1)
 				break
-			if attempt >= retries:
+			if at_cap:
+				LOGGER.warning("Experiment %s: attempt cap (%d) reached without approval", run_id, max_attempts)
 				break
 
 			# apply reviewer fixes (safety-checked), same policy as /generate
@@ -310,10 +320,18 @@ async def experiment_run_handler(request: web.Request) -> web.Response:
 	raw_prompt = (body.get("prompt") or "").strip()
 	if not raw_prompt:
 		return web.json_response({"error": "missing 'prompt'"}, status=400)
-	try:
-		retries = max(0, min(int(body.get("retries", 1)), 4))
-	except (TypeError, ValueError):
-		retries = 1
+
+	def _parse_attempts(body: dict) -> int:
+		"""Max generation attempts (1-10); accepts the legacy 'retries' key
+		as retries+1 for older callers. Defaults to 5."""
+		try:
+			if body.get("attempts"):
+				return max(1, min(int(body["attempts"]), 10))
+			if body.get("retries") is not None:
+				return max(1, min(int(body["retries"]) + 1, 10))
+		except (TypeError, ValueError):
+			pass
+		return 5
 
 	result = await _runner_from_app(request.app).run(
 		character=body.get("character") or "default",
@@ -321,7 +339,7 @@ async def experiment_run_handler(request: web.Request) -> web.Response:
 		q_negative=body.get("negative") or "",
 		do_massage=bool(body.get("massage", True)),
 		do_review=bool(body.get("review", True)),
-		retries=retries,
+		max_attempts=_parse_attempts(body),
 	)
 	if "blocked" in result:
 		return web.json_response({"error": "prompt blocked by safety filter", **result["blocked"]}, status=400)

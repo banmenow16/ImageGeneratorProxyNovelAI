@@ -74,7 +74,7 @@ def test_happy_path_records_all_variants(tmp_path: Path):
 	runner = _make_runner(tmp_path, gen, reviewer)
 
 	out = run(runner.run("Naimi", "huge breasts, red dress, solo",
-		do_massage=True, do_review=True, retries=1))
+		do_massage=True, do_review=True, max_attempts=5))
 
 	assert "blocked" not in out
 	# raw baseline + massaged attempt 0 (approved) = 2 generations, 2 variants
@@ -103,7 +103,7 @@ def test_quality_rejection_chain_applies_fixes(tmp_path: Path):
 	runner = _make_runner(tmp_path, gen, reviewer)
 
 	out = run(runner.run("Naimi", "massive breasts, sitting",
-		do_massage=True, do_review=True, retries=1))
+		do_massage=True, do_review=True, max_attempts=5))
 
 	assert len(out["variants"]) == 3  # raw + attempt-0 + attempt-1
 	a0, a1 = out["variants"][1], out["variants"][2]
@@ -125,7 +125,7 @@ def test_minor_flag_stops_chain_fail_closed(tmp_path: Path):
 	])
 	runner = _make_runner(tmp_path, gen, reviewer)
 
-	out = run(runner.run("Naimi", "woman, red dress", do_massage=True, do_review=True, retries=2))
+	out = run(runner.run("Naimi", "woman, red dress", do_massage=True, do_review=True, max_attempts=5))
 
 	assert len(out["variants"]) == 2  # raw + attempt-0 only — chain stopped
 	assert out["variants"][1]["category"] == "minor"
@@ -152,7 +152,7 @@ def test_unsafe_fix_proposals_are_dropped(tmp_path: Path):
 	])
 	runner = _make_runner(tmp_path, gen, reviewer)
 
-	out = run(runner.run("Naimi", "woman, bedroom", do_massage=True, do_review=True, retries=1))
+	out = run(runner.run("Naimi", "woman, bedroom", do_massage=True, do_review=True, max_attempts=5))
 
 	# the unsafe tag never reaches the regenerated prompt
 	assert "child" not in gen.prompts[2][0]
@@ -163,12 +163,54 @@ def test_reviewer_unavailable_still_records_final(tmp_path: Path):
 	gen = _StubGenerator()
 	runner = _make_runner(tmp_path, gen, None)  # no reviewer
 
-	out = run(runner.run("Naimi", "woman, red dress", do_massage=True, do_review=True, retries=2))
+	out = run(runner.run("Naimi", "woman, red dress", do_massage=True, do_review=True, max_attempts=5))
 
 	assert out["reviewer_used"] is False
 	assert len(out["variants"]) == 2  # raw + single unreviewed attempt
 	assert out["variants"][1]["is_final"] is True
 	assert out["variants"][1]["approved"] is None
+
+
+def test_chain_iterates_until_approved(tmp_path: Path):
+	"""Three rejections then approval: the chain keeps going (applying fixes)
+	until the reviewer approves — not a fixed attempt count."""
+	gen = _StubGenerator()
+	reviewer = _ScriptedReviewer([
+		Verdict(approved=False, category="quality", notes="r1", fix_add=["fix1"]),
+		Verdict(approved=False, category="quality", notes="r2", fix_add=["fix2"]),
+		Verdict(approved=False, category="quality", notes="r3", fix_add=["fix3"]),
+		Verdict(approved=True),
+	])
+	runner = _make_runner(tmp_path, gen, reviewer)
+
+	out = run(runner.run("Naimi", "massive breasts, two girls", do_massage=True,
+		do_review=True, max_attempts=6))
+
+	assert len(out["variants"]) == 5  # raw + 4 attempts
+	final = out["variants"][-1]
+	assert final["approved"] is True and final["is_final"] is True
+	assert "fix3" in final["fix_applied"]
+	assert gen.calls == 5
+
+
+def test_attempt_cap_stops_chain_with_clear_label(tmp_path: Path):
+	"""A never-converging prompt stops at the cap, marked still-rejected
+	(cost safety: experiments must not loop forever)."""
+	gen = _StubGenerator()
+	reviewer = _ScriptedReviewer([
+		Verdict(approved=False, category="quality", notes="still bad", fix_add=["f"])
+		for _ in range(5)
+	])
+	runner = _make_runner(tmp_path, gen, reviewer)
+
+	out = run(runner.run("Naimi", "impossible prompt", do_massage=True,
+		do_review=True, max_attempts=3))
+
+	assert len(out["variants"]) == 4  # raw + 3 capped attempts
+	last = out["variants"][-1]
+	assert last["is_final"] is True and last["approved"] is False
+	assert "attempt cap reached" in last["label"]
+	assert gen.calls == 4
 
 
 def test_db_serializer_roundtrip(tmp_path: Path):

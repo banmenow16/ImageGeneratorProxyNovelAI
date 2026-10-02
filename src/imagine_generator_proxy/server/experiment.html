@@ -78,7 +78,11 @@
 		<div class="checks">
 			<label><input type="checkbox" id="massage" checked> use massager</label>
 			<label><input type="checkbox" id="review" checked> vision review loop</label>
-			<label>retries <select id="retries"><option>0</option><option selected>1</option><option>2</option><option>3</option></select></label>
+			<label>max attempts <select id="attempts">
+				<option>1</option><option>2</option><option>3</option><option>4</option>
+				<option selected>5</option><option>6</option><option>7</option><option>8</option>
+				<option>9</option><option>10</option>
+			</select> <span style="opacity:.6">(iterates until approved, or this cap)</span></label>
 			<span id="reviewer-note"></span>
 		</div>
 		<label></label>
@@ -197,7 +201,7 @@ $("form").addEventListener("submit", async (ev) => {
 		negative: $("negative").value,
 		massage: $("massage").checked,
 		review: $("review").checked,
-		retries: parseInt($("retries").value, 10),
+		attempts: parseInt($("attempts").value, 10),
 	};
 	$("go").disabled = true;
 	startedAt = Date.now();
