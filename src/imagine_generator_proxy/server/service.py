@@ -21,6 +21,7 @@ from imagine_generator_proxy.prompts.massager import (
 	PromptMassager,
 	build_negative_prompt,
 	legacy_assemble,
+	sanitize_fix_tags,
 )
 from imagine_generator_proxy.review.base import Reviewer, Verdict
 from imagine_generator_proxy.server.cache import (
@@ -239,8 +240,9 @@ class GenerationService:
 				raise ImageRejectedError(verdict.notes or "age-safety review")
 
 			if attempt < review_retries:
-				fix_add = [t for t in verdict.fix_add if self._massager.check_safety(t) is None]
-				fix_negate = [t for t in verdict.fix_negate if self._massager.check_safety(t) is None]
+				fix_add, fix_negate = sanitize_fix_tags(verdict.fix_add, verdict.fix_negate, attempt_prompt)
+				fix_add = [t for t in fix_add if self._massager.check_safety(t) is None]
+				fix_negate = [t for t in fix_negate if self._massager.check_safety(t) is None]
 				if fix_add:
 					attempt_prompt = attempt_prompt + ", " + ", ".join(fix_add)
 					LOGGER.info("Applying reviewer fix tags: %s", ", ".join(fix_add))

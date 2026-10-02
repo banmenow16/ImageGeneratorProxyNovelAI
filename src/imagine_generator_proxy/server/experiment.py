@@ -29,6 +29,7 @@ from imagine_generator_proxy.prompts.massager import (
 	PromptMassager,
 	build_negative_prompt,
 	legacy_assemble,
+	sanitize_fix_tags,
 )
 from imagine_generator_proxy.review.base import NoopReviewer, Reviewer, Verdict
 from imagine_generator_proxy.review.openrouter import OpenRouterReviewer
@@ -250,9 +251,11 @@ class ExperimentRunner:
 				LOGGER.warning("Experiment %s: attempt cap (%d) reached without approval", run_id, max_attempts)
 				break
 
-			# apply reviewer fixes (safety-checked), same policy as /generate
-			last_fix_add = [t for t in verdict.fix_add if self._massager.check_safety(t) is None]
-			last_fix_negate = [t for t in verdict.fix_negate if self._massager.check_safety(t) is None]
+			# apply reviewer fixes (composition- and safety-checked), same
+			# policy as /generate
+			last_fix_add, last_fix_negate = sanitize_fix_tags(verdict.fix_add, verdict.fix_negate, attempt_prompt)
+			last_fix_add = [t for t in last_fix_add if self._massager.check_safety(t) is None]
+			last_fix_negate = [t for t in last_fix_negate if self._massager.check_safety(t) is None]
 			if last_fix_add:
 				attempt_prompt = attempt_prompt + ", " + ", ".join(last_fix_add)
 			if last_fix_negate:

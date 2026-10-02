@@ -51,7 +51,7 @@ QC_PROMPT = (
 	"adds <tag> to the negative prompt. Prefer pose/stability/composition tags "
 	"(e.g. 'arms at sides', 'hands in lap', 'sitting upright', 'neg:fused fingers'). "
 	"NEVER propose removing or weakening body-size descriptors or character-identity "
-	"tags — those are fixed preferences. Maximum 6 entries."
+	"tags — those are fixed preferences - and NEVER propose composition changes: no 'solo', no removing figures the scene describes; correct the existing figures, don't delete them. Maximum 6 entries."
 )
 
 # Evolving casebook: failure modes learned from QC of the cache, injected into

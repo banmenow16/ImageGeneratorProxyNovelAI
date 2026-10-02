@@ -21,6 +21,51 @@ LOGGER = logging.getLogger(__name__)
 # NovelAI weight syntax: "1.2::tag::"
 _WEIGHT_RE = re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*::\s*(.+?)\s*::\s*$")
 
+# Substrings indicating a multi-figure scene even when 'solo'/'one girl'
+# tags are present (SillyTavern character cards send both — experiment 22:
+# "solo, one girl" alongside "carrying a small injured woman on her back").
+_MULTI_FIGURE_HINTS = (
+	"two ", "carrying", "another ", "second ", "both women", "both girls",
+	"both men", "pair ", "hugging", "embracing", "kissing", "holding her",
+	"holding him", "piggyback", "princess carry", "helping ",
+)
+
+# Reviewer fix tags that would change WHO is in the image. Fixes must
+# correct defects in existing figures (hands, torso, age), never rewrite
+# composition — experiment 22's fix ("solo, neg:extra characters") deleted
+# the second woman the scene existed to show.
+_COMPOSITION_POSITIVE = {
+	"solo", "one girl", "1girl", "one boy", "1boy", "alone", "solo focus",
+	"multiple girls", "multiple boys", "two girls", "two women", "two men",
+}
+_SUPPRESSIVE_NEGATIVE = {
+	"multiple girls", "multiple boys", "multiple people", "extra characters",
+	"extra figures", "extra people", "background figures", "background people",
+	"second figure", "second person", "second woman", "second man",
+	"second girl", "second boy",
+}
+
+
+def looks_multi_figure(prompt: str) -> bool:
+	"""True when scene language implies more than one figure."""
+	lower = (prompt or "").lower()
+	return any(hint in lower for hint in _MULTI_FIGURE_HINTS)
+
+
+def sanitize_fix_tags(fix_add: list, fix_negate: list, prompt: str) -> tuple:
+	"""Filter reviewer-proposed fixes so they cannot change composition.
+
+	Positive figure-count tags are always dropped. Suppressive negatives are
+	dropped for multi-figure scenes (they delete intended characters) but
+	kept for genuine solo prompts (they remove photobombers).
+	"""
+	add = [t for t in fix_add if t.lower() not in _COMPOSITION_POSITIVE]
+	if looks_multi_figure(prompt):
+		negate = [t for t in fix_negate if t.lower() not in _SUPPRESSIVE_NEGATIVE]
+	else:
+		negate = list(fix_negate)
+	return add, negate
+
 
 @dataclass
 class MassagedPrompt:
@@ -179,6 +224,11 @@ class PromptMassager:
 			return _norm(str(spec["value"])) in tags_norm
 		if t == "tags":
 			return any(_norm(str(v)) in tags_norm for v in spec["value"])
+		if t == "solo_scene":
+			# solo tags present AND the scene language doesn't describe a
+			# second figure (SillyTavern cards send contradictory prompts)
+			any_solo = any(_norm(str(v)) in tags_norm for v in spec["value"])
+			return any_solo and not looks_multi_figure(prompt_lower)
 		if t == "substring":
 			return str(spec["value"]).lower() in prompt_lower
 		if t == "regex":

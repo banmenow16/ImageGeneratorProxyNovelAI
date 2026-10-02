@@ -240,6 +240,43 @@ def test_no_solo_no_person_negations(massager):
 	assert result.negative_additions == []
 
 
+def test_contradictory_solo_prompt_does_not_fire_solo_guard(massager):
+	"""SillyTavern cards send 'solo, one girl' even for two-figure scenes
+	(experiment 22: 'carrying a small injured woman on her back'); the
+	solo-guard must not suppress the intended second figure."""
+	result = massager.massage("solo, one girl, carrying a small injured woman on her back", "X")
+	assert result.negative_additions == []
+
+
+def test_plain_solo_prompt_still_fires_solo_guard(massager):
+	result = massager.massage("solo, one girl, red dress", "X")
+	assert "multiple girls" in result.negative_additions
+
+
+# --- reviewer fix sanitization (composition protection) ---
+
+def test_sanitize_fix_tags_protects_multi_figure_scenes():
+	from imagine_generator_proxy.prompts.massager import sanitize_fix_tags
+	add, negate = sanitize_fix_tags(
+		["solo", "adult woman", "arms at sides"],
+		["extra characters", "background figures", "chibi", "multiple people"],
+		"8ft tall woman carrying a small injured woman on her back")
+	# composition-changing entries dropped; defect corrections kept
+	assert add == ["adult woman", "arms at sides"]
+	assert negate == ["chibi"]
+
+
+def test_sanitize_fix_tags_keeps_suppressives_for_solo_prompts():
+	from imagine_generator_proxy.prompts.massager import sanitize_fix_tags
+	add, negate = sanitize_fix_tags(
+		["arms at sides"],
+		["background figures", "multiple people"],
+		"solo, one girl, red dress, bedroom")
+	assert add == ["arms at sides"]
+	# genuine solo scene: suppressive negatives are appropriate
+	assert negate == ["background figures", "multiple people"]
+
+
 # --- overlay loading ---
 
 OVERLAY_YAML = """\

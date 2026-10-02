@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-RULES_VERSION: int = 3
+RULES_VERSION: int = 4
 
 # Bulky vocabularies live in rule_data.json (loaded here, loud failure if the
 # file is missing or malformed — same fail-closed philosophy as the rules).
@@ -109,7 +109,7 @@ RULES = [
 		"action": {"type": "ensure_append", "value": "detailed anatomy, anatomically correct proportions"},
 		"notes": "large-chest prompts trend to melted torsos; stabilize without touching the size tags"},
 	{"id": "solo-guard", "stage": "enhance", "severity": "safe",
-		"match": {"type": "tags", "value": SOLO_TAGS},
+		"match": {"type": "solo_scene", "value": SOLO_TAGS},
 		"action": {"type": "negate", "value": "multiple girls, multiple boys"},
-		"notes": "solo prompts gain background figures; suppress extra persons in the negative prompt"},
+		"notes": "solo prompts gain background figures; suppressed only when the scene is genuinely single-figure (SillyTavern cards send 'solo, one girl' even for two-figure scenes)"},
 ]
