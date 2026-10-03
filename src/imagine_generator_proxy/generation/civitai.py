@@ -207,7 +207,14 @@ class PonyV6Generator(CivitaiGenerator):
 				"id": "pony-negate-low-scores", "stage": "enhance", "severity": "safe",
 				"match": {"type": "always"},
 				"action": {"type": "negate", "value": "score_6, score_5, score_4"},
-				"notes": "Pony reacts strongly to negated low quality scores"}],
+				"notes": "Pony reacts strongly to negated low quality scores"},
+			{	# base V6 straddles anime/photorealism; its source-tag system
+				# decides. Negating the non-anime sources pins the style.
+				"id": "pony-negate-photorealism", "stage": "enhance", "severity": "safe",
+				"match": {"type": "always"},
+				"action": {"type": "negate",
+					"value": "source_photo, source_furry, source_cartoon, source_pony, photorealistic, realistic, 3d"},
+				"notes": "pin Pony to anime (user preference); V6 drifts realistic otherwise"}],
 		}
 
 
