@@ -22,7 +22,10 @@ from aiohttp import ClientSession, web
 
 from novelai_api.NovelAI_API import NovelAIAPI
 
-from imagine_generator_proxy.generation import (  # noqa: F401 (ImageGenerationType: future img2img/inpainting use)
+from imagine_generator_proxy.generation import (  # noqa: F401
+	Ltx2Video,
+	Wan22Video,
+	Wan26Video,
 	IllustriousGenerator,
 	ImageGenerationType,
 	NoobAIGenerator,
@@ -31,7 +34,7 @@ from imagine_generator_proxy.generation import (  # noqa: F401 (ImageGenerationT
 )
 from imagine_generator_proxy.prompts import PromptMassager
 from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer, Reviewer
-from imagine_generator_proxy.server import experiment, gallery
+from imagine_generator_proxy.server import experiment, gallery, video
 from imagine_generator_proxy.server.service import (
 	GenerationRequest,
 	GenerationService,
@@ -240,6 +243,22 @@ async def on_startup(app: web.Application) -> None:
 		LOGGER.info("No civitaiToken in config — Civitai backends disabled")
 	app["backends"] = backends
 
+	# Video backends (image-to-video): same registry pattern; Civitai-powered
+	civitai_key_v = civitai_key or config.get("civitaiToken") or config.get("civitai_token")
+	video_backends: dict = {}
+	if civitai_key_v:
+		for vcls in (Wan22Video, Wan26Video, Ltx2Video):
+			video_backends[vcls.backend_name] = vcls(api_key=str(civitai_key_v), session=session)
+	app["video_backends"] = video_backends
+	app["video_backend"] = str(config.get("video_backend", "wan22"))
+	app["videos_dir"] = DATA_DIR / "videos"
+	(DATA_DIR / "videos").mkdir(parents=True, exist_ok=True)
+	conn = database.connect()
+	try:
+		video.ensure_video_schema(conn)
+	finally:
+		conn.close()
+
 	app["massager"] = backends["novelai"].massager
 	app["generator"] = novelai_generator
 
@@ -303,6 +322,9 @@ def create_app() -> web.Application:
 	app.router.add_get("/", gallery.gallery_handler)
 	app.router.add_get("/folder/{character}", gallery.folder_handler)
 	app.router.add_static("/cache", str(DATA_DIR / "cache"))
+	(DATA_DIR / "videos").mkdir(parents=True, exist_ok=True)
+	app.router.add_static("/video-files", str(DATA_DIR / "videos"))
+	video.add_routes(app)
 	experiment.add_routes(app)
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)

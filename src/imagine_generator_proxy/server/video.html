@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Video Workbench</title>
+<style>
+:root{--bg:#14161a;--card:#22262e;--border:#333842;--text:#e6e9ee;--muted:#9aa3af;--accent:#6ea8fe;--good:#4cc38a;--bad:#e5524b}
+*{box-sizing:border-box} body{margin:0;padding:20px;background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif}
+h1{margin:0 0 4px;font-size:22px} .sub{color:var(--muted);font-size:13px;margin-bottom:18px} a{color:var(--accent)}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+form{display:grid;grid-template-columns:150px 1fr;gap:10px 12px;align-items:center}
+label{color:var(--muted);font-size:13px}
+input,select,textarea{background:#1d2026;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:13px;width:100%}
+textarea{min-height:60px;resize:vertical}
+button{background:var(--accent);color:#10131a;font-weight:600;border:0;border-radius:7px;padding:10px 22px;font-size:14px;cursor:pointer;justify-self:start}
+button:disabled{opacity:.5;cursor:wait}
+#status{margin-top:10px;font-size:13px;color:var(--muted);min-height:18px} #status.err{color:var(--bad)}
+#result{margin-top:18px} #result video{width:100%;max-width:640px;border-radius:10px;background:#000}
+#srcPreview{max-width:220px;border-radius:8px;border:1px solid var(--border);display:none}
+</style></head><body>
+<h1>Video Workbench</h1>
+<div class="sub">animate a gallery image — pick a source, describe the motion, choose an engine · <a href="/video/gallery">video gallery →</a></div>
+<div class="panel">
+	<form id="form">
+		<label>Character</label><input type="text" id="character" value="Naimi">
+		<label>Source image digest</label><input type="text" id="src" placeholder="64-char digest from the image gallery link">
+		<label>Source preview</label><img id="srcPreview">
+		<label>Motion prompt</label><textarea id="prompt" placeholder="e.g. gentle breathing, hair swaying softly, slow camera push-in"></textarea>
+		<label>Engine</label><select id="engine">
+			<option value="wan22" selected>Wan 2.2 (bang for buck)</option>
+			<option value="wan26">Wan 2.6 (quality)</option>
+			<option value="ltx2">LTX-2 (fast)</option>
+		</select>
+		<label>Duration</label><select id="duration"><option>3</option><option selected>5</option><option>8</option><option>10</option></select>
+		<label></label><button id="go">Generate video</button>
+	</form>
+	<div id="status"></div>
+</div>
+<div id="result"></div>
+<script>
+const $ = id => document.getElementById(id);
+const setStatus = (t, err) => { const s = $("status"); s.textContent = t; s.className = err ? "err" : ""; };
+// prefill from /video?src=...&character=...
+(() => {
+	const p = new URLSearchParams(location.search);
+	if (p.get("character")) $("character").value = p.get("character");
+	if (p.get("src")) $("src").value = p.get("src");
+})();
+const refreshPreview = () => {
+	const d = $("src").value.trim(), c = $("character").value.trim();
+	const img = $("srcPreview");
+	if (d && c) { img.src = `/cache/${c}/${d}.png`; img.style.display = "block"; } else img.style.display = "none";
+};
+$("src").addEventListener("input", refreshPreview); $("character").addEventListener("input", refreshPreview); refreshPreview();
+$("form").addEventListener("submit", async ev => {
+	ev.preventDefault();
+	$("go").disabled = true; $("result").innerHTML = ""; setStatus("uploading source image…");
+	const t0 = Date.now();
+	try {
+		const res = await fetch("/video/generate/stream", {method: "POST",
+			headers: {"Content-Type": "application/json"},
+			body: JSON.stringify({character: $("character").value, source_digest: $("src").value.trim(),
+				prompt: $("prompt").value, engine: $("engine").value, duration: parseInt($("duration").value, 10)})});
+		const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+		while (true) {
+			const {done, value} = await reader.read(); if (done) break;
+			buf += dec.decode(value, {stream: true}); let nl;
+			while ((nl = buf.indexOf("\n")) >= 0) {
+				const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+				if (!line) continue;
+				const ev2 = JSON.parse(line);
+				if (ev2.event === "step") setStatus(`${ev2.phase}… (${((Date.now()-t0)/1000).toFixed(0)}s)`);
+				else if (ev2.event === "error") setStatus(ev2.error, true);
+				else if (ev2.event === "done") {
+					setStatus(`done in ${((Date.now()-t0)/1000).toFixed(0)}s — ${(ev2.bytes/1e6).toFixed(1)} MB via ${ev2.engine}`);
+					$("result").innerHTML = `<video controls autoplay loop src="${ev2.url}"></video>`;
+				}
+			}
+		}
+	} catch (e) { setStatus("failed: " + e, true); }
+	finally { $("go").disabled = false; }
+});
+</script></body></html>

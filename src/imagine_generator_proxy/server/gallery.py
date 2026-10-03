@@ -148,6 +148,7 @@ async def folder_handler(request: web.Request) -> web.Response:
 			f'<div class="card"><img src="/cache/{_esc(character)}/{_esc(filename)}" alt="{_esc(filename)}">'
 			f'<div class="card-body">{prompt_html}{negative_html}'
 			f'<a class="run-link" href="{_esc(experiment_href)}">▶ run in experiment workbench</a>'
+		f'<a class="run-link" href="/video?src={_esc(digest)}&amp;character={_esc(character)}">🎬 animate</a>'
 			f'<div class="date">{_esc(date_label)}</div></div></div>'
 		)
 
