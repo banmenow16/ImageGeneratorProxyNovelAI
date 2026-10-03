@@ -54,9 +54,13 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 		conn.execute("ALTER TABLE reviews ADD COLUMN attempt INTEGER DEFAULT 0")
 	if "tags" not in review_cols:
 		conn.execute("ALTER TABLE reviews ADD COLUMN tags TEXT")
-	# Experiment workbench: provenance for /experiment runs (raw baseline +
-	# massaged review chain), every attempt stored and the accepted one
-	# flagged final.
+	# attempt ledger (production twin of experiment_images): full per-attempt
+	# provenance for post-hoc failure analysis and rules-engine tuning
+	for col, decl in (("prompt_used", "TEXT"), ("negative_used", "TEXT"),
+			("fix_applied", "TEXT"), ("is_final", "INTEGER DEFAULT 0")):
+		if col not in review_cols:
+			conn.execute(f"ALTER TABLE reviews ADD COLUMN {col} {decl}")
+	# Experiment workbench: provenance for /experiment runs
 	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_runs (
 		id INTEGER PRIMARY KEY,
 		character TEXT,
@@ -122,7 +126,7 @@ class Database:
 
 	def record_generated_image(self, character: str, digest: str, prompt: str,
 			negative_prompt: str, model: str, raw_prompt: str,
-			massager_version: Optional[int]) -> None:
+			massager_version) -> None:
 		"""Insert a cache row for a freshly generated image."""
 		try:
 			conn = self.connect()
@@ -139,16 +143,22 @@ class Database:
 			LOGGER.exception("Failed to store generated image in database")
 
 	def log_review_outcome(self, digest: str, character: str, verdict: Verdict,
-			attempt: int = 0, tags: str = "") -> None:
-		"""Record a review outcome for the evolving hint history."""
+			attempt: int = 0, tags: str = "", prompt_used: str = "",
+			negative_used: str = "", fix_applied: str = "",
+			is_final: bool = False) -> None:
+		"""Record one generation attempt's review outcome with full
+		provenance (the production attempt ledger)."""
 		try:
 			conn = self.connect()
 			try:
 				conn.execute(
-					"INSERT INTO reviews (digest, character, approved, category, notes, attempt, tags)"
-					" VALUES (?, ?, ?, ?, ?, ?, ?)",
+					"INSERT INTO reviews (digest, character, approved, category, notes, attempt, tags,"
+					" prompt_used, negative_used, fix_applied, is_final)"
+					" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 					(digest, character, 1 if verdict.approved else 0, verdict.category,
-						(verdict.notes or "")[-1000:], attempt, tags[-2000:]),
+						(verdict.notes or "")[-1000:], attempt, tags[-2000:],
+						prompt_used[-2000:], negative_used[-2000:], fix_applied[:500],
+						1 if is_final else 0),
 				)
 				conn.commit()
 			finally:

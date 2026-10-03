@@ -225,12 +225,27 @@ class GenerationService:
 		for attempt in range(review_retries + 1):
 			verdict = await self._reviewer.review(bytes(image.data), attempt_prompt,
 				attempt=attempt, previous_notes=previous_notes, character=request.character)
+			previous_notes = verdict.notes or ""
+
+			# compute the fixes for the NEXT attempt (if any) before logging,
+			# so the ledger row records what was applied in response
+			fix_add: list = []
+			fix_negate: list = []
+			if not verdict.approved and attempt < review_retries:
+				fix_add, fix_negate = sanitize_fix_tags(verdict.fix_add, verdict.fix_negate, attempt_prompt)
+				fix_add = [t for t in fix_add if self._massager.check_safety(t) is None]
+				fix_negate = [t for t in fix_negate if self._massager.check_safety(t) is None]
+			fix_applied = ", ".join(fix_add + [f"neg:{t}" for t in fix_negate])
+			is_final = bool(verdict.approved) or attempt >= review_retries
+
 			if log_reviews:
 				self._database.log_review_outcome(digest, request.character, verdict,
-					attempt=attempt, tags=attempt_prompt)
+					attempt=attempt, tags=attempt_prompt,
+					prompt_used=attempt_prompt, negative_used=attempt_negative,
+					fix_applied=fix_applied, is_final=is_final)
+
 			if verdict.approved:
 				return image
-			previous_notes = verdict.notes or ""
 
 			if verdict.category == "minor" and attempt >= review_retries:
 				# out of attempts while age-flagged: fail-closed, never served
@@ -240,9 +255,6 @@ class GenerationService:
 				raise ImageRejectedError(verdict.notes or "age-safety review")
 
 			if attempt < review_retries:
-				fix_add, fix_negate = sanitize_fix_tags(verdict.fix_add, verdict.fix_negate, attempt_prompt)
-				fix_add = [t for t in fix_add if self._massager.check_safety(t) is None]
-				fix_negate = [t for t in fix_negate if self._massager.check_safety(t) is None]
 				if fix_add:
 					attempt_prompt = attempt_prompt + ", " + ", ".join(fix_add)
 					LOGGER.info("Applying reviewer fix tags: %s", ", ".join(fix_add))
