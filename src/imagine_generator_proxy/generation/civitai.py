@@ -124,7 +124,9 @@ class CivitaiGenerator(ImageGenerator):
 					raise RuntimeError(f"poll HTTP {resp.status}: {(await resp.text())[:200]}")
 				workflow = _json(await resp.text())
 		if workflow.get("status") != "succeeded":
-			raise RuntimeError(f"workflow {workflow.get('status')}: {str(workflow)[:300]}")
+			step = (workflow.get("steps") or [{}])[0]
+			detail = step.get("error") or step.get("failureReason") or workflow.get("failureReason") or ""
+			raise RuntimeError(f"workflow {workflow.get('status')} step={step.get('status')}: {str(detail)[:300]}")
 		return workflow
 
 	def _image_from(self, workflow: dict) -> GeneratedImage:
@@ -165,7 +167,7 @@ class IllustriousGenerator(CivitaiGenerator):
 	def loras(self) -> dict:
 		# Breast Size Slider (Pony/Illustrious) — 100k+ downloads, the
 		# ecosystem favorite for exactly this tag class
-		return {"urn:air:illustrious:lora:civitai:481016@1835318": 0.7}
+		return {"urn:air:sdxl:lora:civitai:481016@1835318": 0.7}
 
 	def rules_overrides(self) -> dict:
 		return {
@@ -190,7 +192,7 @@ class PonyV6Generator(CivitaiGenerator):
 
 	def loras(self) -> dict:
 		# Pony-native Breast Size Slider
-		return {"urn:air:pony:lora:civitai:1121948@1260971": 0.7}
+		return {"urn:air:sdxl:lora:civitai:1121948@1260971": 0.7}
 
 	def rules_overrides(self) -> dict:
 		return {
@@ -220,7 +222,7 @@ class NoobAIGenerator(CivitaiGenerator):
 
 	def loras(self) -> dict:
 		# NoobAI is Illustrious-trained — the Illustrious slider applies
-		return {"urn:air:illustrious:lora:civitai:481016@1835318": 0.7}
+		return {"urn:air:sdxl:lora:civitai:481016@1835318": 0.7}
 
 	def generation_params(self) -> dict:
 		params = super().generation_params()

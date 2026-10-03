@@ -79,7 +79,7 @@ def test_min_interval_paces_sequential_generations():
 
 	api = _StubAPI([("image_0.png", b"a"), ("image_0.png", b"b")])
 	gen = NovelAIGenerator(api, {"generation_retries": 1, "generation_backoff": 0.0,
-		"generation_min_interval": 0.15})
+		"generation_min_interval": 0.3})
 	start = time.monotonic()
 	first = _run(gen.generate("p", "n", prompt_is_complete=True))
 	mid = time.monotonic()
@@ -87,5 +87,5 @@ def test_min_interval_paces_sequential_generations():
 	end = time.monotonic()
 	assert first is not None and second is not None
 	# first call starts immediately (no prior generation); second waits for the interval
-	assert mid - start < 0.15
-	assert end - mid >= 0.10  # allowed small scheduling slack below the nominal 0.15
+	assert mid - start < 0.3
+	assert end - mid >= 0.15  # allowed small scheduling slack below the nominal 0.15

@@ -30,7 +30,7 @@ token: "pst-YOUR_TOKEN_HERE"
 # civitai_model_noobai: urn:air:sdxl:checkpoint:civitai:833294@1116447
 # Per-model LoRAs (AIR URN -> strength); replaces that model's defaults:
 # civitai_loras_illustrious:
-#   "urn:air:illustrious:lora:civitai:481016@1835318": 0.7
+#   "urn:air:sdxl:lora:civitai:481016@1835318": 0.7
 
 # Vision review of generated images via OpenRouter (Phase 2).
 # WARNING: enabling this sends every generated image to OpenRouter (third
