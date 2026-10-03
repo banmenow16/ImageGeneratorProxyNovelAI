@@ -21,12 +21,16 @@ token: "pst-YOUR_TOKEN_HERE"
 
 # Generation backends. Each Civitai model provides its own rule overrides
 # (quality-tag vocabulary, quirks) automatically; safety/leak/taste rules
-# stay shared across all backends.
+# stay shared across all backends. Civitai uses the Orchestration API
+# (orchestration.civitai.com); an image at 832x1216/28 steps costs ~3 Buzz.
 # generation_backend: novelai      # what /generate uses: novelai|illustrious|pony|noobai
-# civitaiToken: "ct_..."           # enables the Civitai backends (on-site generation costs Buzz)
-# civitai_version_illustrious: 889818    # optional modelVersionId overrides
-# civitai_version_pony: 290640
-# civitai_version_noobai: 1116447        # eps-pred 1.1; v-pred 1.0 is 1190596
+# civitaiToken: "<api key>"        # enables the Civitai backends (costs Buzz per image)
+# civitai_model_illustrious: urn:air:sdxl:checkpoint:civitai:795765@889818   # optional URN overrides
+# civitai_model_pony: urn:air:sdxl:checkpoint:civitai:257749@290640
+# civitai_model_noobai: urn:air:sdxl:checkpoint:civitai:833294@1116447
+# Per-model LoRAs (AIR URN -> strength); replaces that model's defaults:
+# civitai_loras_illustrious:
+#   "urn:air:illustrious:lora:civitai:481016@1835318": 0.7
 
 # Vision review of generated images via OpenRouter (Phase 2).
 # WARNING: enabling this sends every generated image to OpenRouter (third

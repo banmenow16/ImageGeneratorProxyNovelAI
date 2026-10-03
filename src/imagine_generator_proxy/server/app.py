@@ -228,11 +228,14 @@ async def on_startup(app: web.Application) -> None:
 	if civitai_key:
 		for cls in (IllustriousGenerator, PonyV6Generator, NoobAIGenerator):
 			gen = cls(api_key=str(civitai_key), session=session,
-				version_override=config.get(f"civitai_version_{cls.backend_name}"))
+				urn_override=config.get(f"civitai_model_{cls.backend_name}"),
+				lora_overrides=config.get(f"civitai_loras_{cls.backend_name}"))
 			backends[cls.backend_name] = Backend(
 				name=cls.backend_name, display=cls.display_name, generator=gen,
 				massager=PromptMassager.from_config(config, DATA_DIR,
 					backend_overrides=gen.rules_overrides()))
+		LOGGER.info("Civitai backends registered: %s",
+			", ".join(b for b in backends if b != "novelai"))
 	else:
 		LOGGER.info("No civitaiToken in config — Civitai backends disabled")
 	app["backends"] = backends
