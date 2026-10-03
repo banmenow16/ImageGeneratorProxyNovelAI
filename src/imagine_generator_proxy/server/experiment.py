@@ -365,10 +365,16 @@ def _run_payload(conn: sqlite3.Connection, run_id: int) -> Optional[dict]:
 
 # --- HTTP handlers (thin adapters) ---
 
-def _runner_from_app(app: web.Application) -> ExperimentRunner:
+def _runner_from_app(app: web.Application, backend_name: Optional[str] = None) -> ExperimentRunner:
+	backends: dict = app.get("backends") or {}
+	backend = backends.get(backend_name) if backend_name else None
+	if backend is None:
+		backend = backends.get(app.get("generation_backend", "novelai")) \
+			or backends.get("novelai")
+	assert backend is not None, "no generation backends registered"
 	return ExperimentRunner(
-		massager=app["massager"],
-		generator=app["generator"],
+		massager=backend.massager,
+		generator=backend.generator,
 		reviewer=app.get("experiment_reviewer"),
 		config=app.get("config", {}),
 		cache_dir=app["cache_dir"],
@@ -384,11 +390,11 @@ async def experiment_page_handler(request: web.Request) -> web.Response:
 async def _parse_run_body(request: web.Request):
 	"""Common request parsing for the run endpoints.
 
-	Returns (params dict, None) or (None, error response)."""
+	Returns (params dict, backend name, error response)."""
 	try:
 		body = await request.json()
 	except Exception:
-		return None, web.json_response({"error": "request body must be JSON"}, status=400)
+		return None, None, web.json_response({"error": "request body must be JSON"}, status=400)
 
 	raw_prompt = (body.get("prompt") or "").strip()
 	if not raw_prompt:
@@ -414,15 +420,15 @@ async def _parse_run_body(request: web.Request):
 		"do_review": bool(body.get("review", True)),
 		"max_attempts": _parse_attempts(body),
 	}
-	return params, None
+	return params, body.get("backend"), None
 
 
 async def experiment_run_handler(request: web.Request) -> web.Response:
-	params, error = await _parse_run_body(request)
+	params, backend, error = await _parse_run_body(request)
 	if error is not None:
 		return error
 
-	result = await _runner_from_app(request.app).run(**params)
+	result = await _runner_from_app(request.app, backend).run(**params)
 	if "blocked" in result:
 		return web.json_response({"error": "prompt blocked by safety filter", **result["blocked"]}, status=400)
 	result["reviewer_available"] = bool(request.app.get("experiment_reviewer"))
@@ -433,7 +439,7 @@ async def experiment_run_stream_handler(request: web.Request) -> web.StreamRespo
 	"""Live version of /experiment/run: newline-delimited JSON events as the
 	pipeline progresses (step / image / verdict / blocked), then one final
 	'done' event carrying the full run payload."""
-	params, error = await _parse_run_body(request)
+	params, backend, error = await _parse_run_body(request)
 	if error is not None:
 		return error
 
@@ -447,7 +453,7 @@ async def experiment_run_stream_handler(request: web.Request) -> web.StreamRespo
 	async def on_event(event: dict) -> None:
 		await response.write((json.dumps(event) + "\n").encode("utf-8"))
 
-	result = await _runner_from_app(request.app).run(**params, on_event=on_event)
+	result = await _runner_from_app(request.app, backend).run(**params, on_event=on_event)
 	result["reviewer_available"] = bool(request.app.get("experiment_reviewer"))
 	await response.write((json.dumps({"event": "done", "run": result}) + "\n").encode("utf-8"))
 	await response.write_eof()

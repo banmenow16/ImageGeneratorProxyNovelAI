@@ -10,15 +10,25 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
+
+from imagine_generator_proxy.generation.base import ImageGenerator
+from imagine_generator_proxy.prompts.massager import PromptMassager
 
 from aiohttp import ClientSession, web
 
 from novelai_api.NovelAI_API import NovelAIAPI
 
-from imagine_generator_proxy.generation import ImageGenerationType, NovelAIGenerator  # noqa: F401 (ImageGenerationType: future img2img/inpainting use)
+from imagine_generator_proxy.generation import (  # noqa: F401 (ImageGenerationType: future img2img/inpainting use)
+	IllustriousGenerator,
+	ImageGenerationType,
+	NoobAIGenerator,
+	NovelAIGenerator,
+	PonyV6Generator,
+)
 from imagine_generator_proxy.prompts import PromptMassager
 from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer, Reviewer
 from imagine_generator_proxy.server import experiment, gallery
@@ -189,7 +199,7 @@ async def on_startup(app: web.Application) -> None:
 	api = NovelAIAPI(session)
 	app["novelai_api"] = api
 
-	# Global lock: one NovelAI call at a time
+	# Global lock: one generation at a time per upstream
 	app["generate_lock"] = asyncio.Lock()
 
 	cache_dir = DATA_DIR / "cache"
@@ -206,11 +216,37 @@ async def on_startup(app: web.Application) -> None:
 	config = load_config()
 	app["config"] = config
 
-	massager = PromptMassager.from_config(config, DATA_DIR)
-	app["massager"] = massager
+	# --- backend registry: each generator carries its own rule overrides ---
+	novelai_generator = NovelAIGenerator(api, config, lock=app["generate_lock"])
+	backends: dict = {
+		"novelai": Backend(
+			name="novelai", display="NovelAI v4.5", generator=novelai_generator,
+			massager=PromptMassager.from_config(config, DATA_DIR,
+				backend_overrides=novelai_generator.rules_overrides())),
+	}
+	civitai_key = config.get("civitaiToken") or config.get("civitai_token")
+	if civitai_key:
+		for cls in (IllustriousGenerator, PonyV6Generator, NoobAIGenerator):
+			gen = cls(api_key=str(civitai_key), session=session,
+				version_override=config.get(f"civitai_version_{cls.backend_name}"))
+			backends[cls.backend_name] = Backend(
+				name=cls.backend_name, display=cls.display_name, generator=gen,
+				massager=PromptMassager.from_config(config, DATA_DIR,
+					backend_overrides=gen.rules_overrides()))
+	else:
+		LOGGER.info("No civitaiToken in config — Civitai backends disabled")
+	app["backends"] = backends
 
-	generator = NovelAIGenerator(api, config, lock=app["generate_lock"])
-	app["generator"] = generator
+	app["massager"] = backends["novelai"].massager
+	app["generator"] = novelai_generator
+
+	# Production /generate uses the configured backend
+	backend_name = str(config.get("generation_backend", "novelai"))
+	if backend_name not in backends:
+		LOGGER.warning("Configured generation_backend %r not available — using novelai", backend_name)
+		backend_name = "novelai"
+	app["generation_backend"] = backend_name
+	production = backends[backend_name]
 
 	# Post-generation reviewer: two-tier OpenRouter vision review when enabled
 	# in config (images are sent to OpenRouter); noop otherwise.
@@ -220,7 +256,8 @@ async def on_startup(app: web.Application) -> None:
 	app["reviewer"] = reviewer
 
 	# The pipeline service owns the /generate flow end to end
-	app["service"] = GenerationService(massager, generator, reviewer, config, cache_dir, database)
+	app["service"] = GenerationService(production.massager, production.generator,
+		reviewer, config, cache_dir, database)
 
 	# Experiment workbench reviewer: runs whenever an OpenRouter key exists,
 	# independently of the production vision_review flag.
@@ -240,6 +277,15 @@ async def on_startup(app: web.Application) -> None:
 			await api.high_level.login(email, password)
 		except Exception:
 			LOGGER.exception("Failed to login with email/password")
+
+
+@dataclass
+class Backend:
+	"""A selectable generation backend: generator + its ruleset-matched massager."""
+	name: str
+	display: str
+	generator: ImageGenerator
+	massager: PromptMassager
 
 
 async def on_cleanup(app: web.Application) -> None:

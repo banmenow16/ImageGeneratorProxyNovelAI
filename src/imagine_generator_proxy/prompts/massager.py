@@ -177,11 +177,22 @@ class PromptMassager:
 		self.safety_enabled = safety_enabled
 
 	@classmethod
-	def from_config(cls, config: dict, config_dir: Path) -> "PromptMassager":
+	def from_config(cls, config: dict, config_dir: Path,
+			backend_overrides: Optional[dict] = None) -> "PromptMassager":
 		enabled = bool(config.get("prompt_massage", True))
 		safety_enabled = bool(config.get("safety_filter", True))
 		rules = list(prompt_rules.RULES)
 		version = prompt_rules.RULES_VERSION
+
+		# generator-provided overrides: per-model quality vocabulary and
+		# quirks (see ImageGenerator.rules_overrides). Universal rules —
+		# safety, leak-cut, dedupe, taste calibration — stay shared.
+		if backend_overrides:
+			for rule_id in backend_overrides.get("remove", []):
+				rules = [r for r in rules if r.get("id") != rule_id]
+			for rule_id, replacement in (backend_overrides.get("replace") or {}).items():
+				rules = [replacement if r.get("id") == rule_id else r for r in rules]
+			rules += list(backend_overrides.get("add", []))
 
 		rules_file = config.get("rules_file")
 		if rules_file:

@@ -111,7 +111,9 @@ def test_card_prefill_strips_negative_leak(tmp_path: Path):
 	conn.close()
 	response = run(folder_handler(_FakeRequest(app, {"character": "Naimi"})))
 	hrefs = re.findall(r'href="(/experiment\?[^"]+)"', response.text)
-	params = parse_qs(urlparse(unescape(hrefs[0])).query)
+	# the no-DB-row card carries an empty prompt param; use the populated one
+	parsed = [parse_qs(urlparse(unescape(h)).query) for h in hrefs]
+	params = next(p for p in parsed if p.get("prompt"))
 	assert params["prompt"] == ["woman, red dress"]
 	assert "deformed" not in params["prompt"][0]
 

@@ -45,6 +45,10 @@ class NovelAIGenerator(ImageGenerator):
 		self._min_interval = float(config.get("generation_min_interval", 1.0))
 		self._last_started = 0.0
 
+	def rules_overrides(self) -> dict:
+		"""The core ruleset is already NovelAI-shaped; nothing to override."""
+		return {}
+
 	async def generate(
 		self, prompt: str, negative_prompt: str, prompt_is_complete: bool
 	) -> Optional[GeneratedImage]:

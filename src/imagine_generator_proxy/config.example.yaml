@@ -19,6 +19,15 @@ token: "pst-YOUR_TOKEN_HERE"
 # rules_file: rules.yaml   # optional overlay next to config.yaml; replaces the built-in rules
                            # wholesale and must define its own top-level version
 
+# Generation backends. Each Civitai model provides its own rule overrides
+# (quality-tag vocabulary, quirks) automatically; safety/leak/taste rules
+# stay shared across all backends.
+# generation_backend: novelai      # what /generate uses: novelai|illustrious|pony|noobai
+# civitaiToken: "ct_..."           # enables the Civitai backends (on-site generation costs Buzz)
+# civitai_version_illustrious: 889818    # optional modelVersionId overrides
+# civitai_version_pony: 290640
+# civitai_version_noobai: 1116447        # eps-pred 1.1; v-pred 1.0 is 1190596
+
 # Vision review of generated images via OpenRouter (Phase 2).
 # WARNING: enabling this sends every generated image to OpenRouter (third
 # party) and costs a small per-generation API fee.

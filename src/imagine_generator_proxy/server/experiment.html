@@ -72,6 +72,13 @@
 	<form id="form">
 		<label for="character">Character</label>
 		<input type="text" id="character" value="Naimi">
+		<label for="backend">Generator</label>
+		<select id="backend">
+			<option value="novelai" selected>NovelAI v4.5</option>
+			<option value="illustrious">Illustrious-XL (Civitai)</option>
+			<option value="pony">Pony Diffusion V6 XL (Civitai)</option>
+			<option value="noobai">NoobAI-XL (Civitai)</option>
+		</select>
 		<label for="prompt">Positive prompt</label>
 		<textarea id="prompt" placeholder="e.g. topless woman sitting on bed, massive heavy breasts, arms crossed underneath, looking at viewer, bedroom, soft lighting"></textarea>
 		<label for="negative">Negative prompt <span style="opacity:.6">(optional)</span></label>
@@ -199,6 +206,7 @@ $("form").addEventListener("submit", async (ev) => {
 	ev.preventDefault();
 	const body = {
 		character: $("character").value,
+		backend: $("backend").value,
 		prompt: $("prompt").value,
 		negative: $("negative").value,
 		massage: $("massage").checked,
