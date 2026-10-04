@@ -34,7 +34,7 @@ from imagine_generator_proxy.generation import (  # noqa: F401
 )
 from imagine_generator_proxy.prompts import PromptMassager
 from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer, Reviewer
-from imagine_generator_proxy.server import experiment, gallery, video
+from imagine_generator_proxy.server import buzz, experiment, gallery, video
 from imagine_generator_proxy.server.service import (
 	GenerationRequest,
 	GenerationService,
@@ -325,6 +325,7 @@ def create_app() -> web.Application:
 	(DATA_DIR / "videos").mkdir(parents=True, exist_ok=True)
 	app.router.add_static("/video-files", str(DATA_DIR / "videos"))
 	video.add_routes(app)
+	buzz.add_routes(app)
 	experiment.add_routes(app)
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)

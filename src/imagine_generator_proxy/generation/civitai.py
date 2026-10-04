@@ -8,6 +8,7 @@ Cost at 832x1216/28 steps is ~3 Buzz per image (whatif-verified).
 
 from __future__ import annotations
 
+from pathlib import Path
 import asyncio
 import logging
 from typing import Any, Optional
@@ -130,6 +131,11 @@ class CivitaiGenerator(ImageGenerator):
 		return workflow
 
 	def _image_from(self, workflow: dict) -> GeneratedImage:
+		try:
+			from imagine_generator_proxy.server.buzz import record_transactions
+			record_transactions(Path.cwd() / "data", workflow.get("transactions"))
+		except Exception:
+			pass
 		steps = workflow.get("steps") or []
 		if not steps:
 			raise RuntimeError("workflow has no steps")

@@ -10,11 +10,13 @@ label{color:var(--muted);font-size:13px}
 input,select,textarea{background:#1d2026;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:13px;width:100%}
 textarea{min-height:60px;resize:vertical}
 button{background:var(--accent);color:#10131a;font-weight:600;border:0;border-radius:7px;padding:10px 22px;font-size:14px;cursor:pointer;justify-self:start}
-button:disabled{opacity:.5;cursor:wait}
+button:disabled{opacity:.5;cursor:wait;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:.9}}
 #status{margin-top:10px;font-size:13px;color:var(--muted);min-height:18px} #status.err{color:var(--bad)}
 #result{margin-top:18px} #result video{width:100%;max-width:640px;border-radius:10px;background:#000}
 #srcPreview{max-width:220px;border-radius:8px;border:1px solid var(--border);display:none}
 </style></head><body>
+<span id="buzz" style="float:right;font-size:13px;color:#9aa3af"></span>
 <h1>Video Workbench</h1>
 <div class="sub">animate a gallery image — pick a source, describe the motion, choose an engine · <a href="/video/gallery">video gallery →</a></div>
 <div class="panel">
@@ -53,6 +55,8 @@ $("form").addEventListener("submit", async ev => {
 	ev.preventDefault();
 	$("go").disabled = true; $("result").innerHTML = ""; setStatus("uploading source image…");
 	const t0 = Date.now();
+	let phase = "starting";
+	setInterval(() => { if ($("go").disabled) setStatus(`${phase}… ${((Date.now()-t0)/1000).toFixed(0)}s`); }, 1000);
 	try {
 		const res = await fetch("/video/generate/stream", {method: "POST",
 			headers: {"Content-Type": "application/json"},
@@ -66,7 +70,7 @@ $("form").addEventListener("submit", async ev => {
 				const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
 				if (!line) continue;
 				const ev2 = JSON.parse(line);
-				if (ev2.event === "step") setStatus(`${ev2.phase}… (${((Date.now()-t0)/1000).toFixed(0)}s)`);
+				if (ev2.event === "step") { phase = ev2.phase; setStatus(`${ev2.phase}… (${((Date.now()-t0)/1000).toFixed(0)}s)`); } else if (false) setStatus(`${ev2.phase}… (${((Date.now()-t0)/1000).toFixed(0)}s)`);
 				else if (ev2.event === "error") setStatus(ev2.error, true);
 				else if (ev2.event === "done") {
 					setStatus(`done in ${((Date.now()-t0)/1000).toFixed(0)}s — ${(ev2.bytes/1e6).toFixed(1)} MB via ${ev2.engine}`);
@@ -77,4 +81,9 @@ $("form").addEventListener("submit", async ev => {
 	} catch (e) { setStatus("failed: " + e, true); }
 	finally { $("go").disabled = false; }
 });
+</script><script>
+fetch("/api/buzz").then(r => r.json()).then(d => {
+	const el = document.getElementById("buzz"); if (!el) return;
+	el.textContent = d.remaining != null ? `Buzz left: ~${d.remaining} (spent ${d.total_spent})` : `Buzz spent: ${d.total_spent}`;
+}).catch(() => {});
 </script></body></html>

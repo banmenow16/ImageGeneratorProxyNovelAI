@@ -78,26 +78,10 @@ class CivitaiVideoGenerator(VideoGenerator):
 			return None
 
 	async def _upload_image(self, path) -> Optional[str]:
-		"""Upload a local image as a raw body (the blobs endpoint rejects
-		multipart), returning its blob URL."""
-		import json
-		data_bytes = path.read_bytes()
-		async with self._session.post(
-			"https://orchestration.civitai.com/v2/consumer/blobs",
-			data=data_bytes,
-			headers={**self._headers(), "Content-Type": "image/png"},
-			timeout=self._timeout,
-		) as resp:
-			text = await resp.text()
-			if resp.status not in (200, 201):
-				raise RuntimeError(f"blob upload HTTP {resp.status}: {text[:200]}")
-			data = json.loads(text)
-			blob = data.get("blob") if isinstance(data, dict) else None
-			for candidate in (data.get("url"), (blob or {}).get("url"),
-					data.get("id"), (blob or {}).get("id")):
-				if candidate:
-					return str(candidate) if str(candidate).startswith("http") 						else f"https://orchestration.civitai.com/v2/consumer/blobs/{candidate}"
-			raise RuntimeError(f"blob upload response without url/id: {text[:200]}")
+		"""startImage accepts 'A URL, A DataURL or a Base64 string' — pass the
+		local image as raw base64 (no upload round-trip, no public URL needed)."""
+		import base64
+		return base64.b64encode(path.read_bytes()).decode("ascii")
 
 	async def _submit(self, body: dict) -> dict:
 		async with self._session.post(

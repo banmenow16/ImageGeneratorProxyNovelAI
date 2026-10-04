@@ -65,6 +65,7 @@
 </style>
 </head>
 <body>
+<span id="buzz" style="float:right;font-size:13px;color:#9aa3af"></span>
 <h1>Pipeline Experiment Workbench</h1>
 <div class="sub">raw baseline → massaged prompt → review / fix / regenerate chain — every step visible</div>
 
@@ -313,5 +314,10 @@ $("form").addEventListener("submit", async (ev) => {
 
 loadHistory();
 </script>
-</body>
+<script>
+fetch("/api/buzz").then(r => r.json()).then(d => {
+	const el = document.getElementById("buzz"); if (!el) return;
+	el.textContent = d.remaining != null ? `Buzz left: ~${d.remaining} (spent ${d.total_spent})` : `Buzz spent: ${d.total_spent}`;
+}).catch(() => {});
+</script></body>
 </html>
