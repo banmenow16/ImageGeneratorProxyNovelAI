@@ -52,7 +52,7 @@ class CharacterReviewer:
 	def _context_note(self) -> str:
 		return (
 			f"CHARACTER GROUNDING: You are judging images of {self._name}. "
-			f"This is how she describes herself: \"{self._description[:1200]}\" "
+			f"This is how she describes herself: \"{self._description[:4000]}\" "
 			"FIRST assess LIKENESS — does the figure match this appearance? "
 			"Name specific mismatches (hair, eyes, build, features) in your notes, "
 			"prefixed 'LIKENESS:'. Then do your normal quality review. A likeness "
@@ -103,7 +103,7 @@ async def character_critique(api_key: str, model: str, name: str,
 		resp = await client.chat.completions.create(
 			model=model, max_tokens=400,
 			messages=[{"role": "user", "content": [
-				{"type": "text", "text": CRITIQUE_PROMPT.format(name=name, description=description[:1500])},
+				{"type": "text", "text": CRITIQUE_PROMPT.format(name=name, description=description[:4000])},
 				{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
 			]}],
 		)
