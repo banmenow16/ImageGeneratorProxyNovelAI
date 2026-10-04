@@ -505,6 +505,28 @@ async def experiment_run_detail_handler(request: web.Request) -> web.Response:
 	return web.json_response(payload)
 
 
+async def image_engines_handler(request: web.Request) -> web.Response:
+	backends: dict = request.app.get("backends") or {}
+	engines = [{"id": b.name, "display": b.display}
+		for b in backends.values()]
+	return web.json_response({"engines": engines,
+		"default": request.app.get("generation_backend", "novelai")})
+
+
+async def character_sheet_handler(request: web.Request) -> web.Response:
+	"""Full character sheet for SillyTavern ingestion (STScript fetches this)."""
+	name = request.match_info["name"]
+	character = Database(request.app["db_path"]).get_character(name)
+	if character is None:
+		return web.json_response({"name": name, "exists": False})
+	return web.json_response({
+		"name": name, "exists": True,
+		"description": character.get("description") or "",
+		"canonical_tags": character.get("canonical_tags") or "",
+		"advice": character.get("advice") or "",
+	})
+
+
 async def character_description_handler(request: web.Request) -> web.Response:
 	name = request.match_info["name"]
 	database = Database(request.app["db_path"])
@@ -522,6 +544,8 @@ async def character_description_handler(request: web.Request) -> web.Response:
 
 def add_routes(app: web.Application) -> None:
 	app.router.add_get("/api/characters/{name}/description", character_description_handler)
+	app.router.add_get("/api/characters/{name}/sheet", character_sheet_handler)
+	app.router.add_get("/api/image-engines", image_engines_handler)
 	app.router.add_post("/api/characters/{name}/description", character_description_handler)
 	app.router.add_get("/experiment", experiment_page_handler)
 	app.router.add_post("/experiment/run", experiment_run_handler)

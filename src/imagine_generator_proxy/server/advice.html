@@ -69,7 +69,7 @@ $("form").addEventListener("submit", async ev => {
 	$("go").disabled = true; $("rounds").innerHTML = ""; $("final").style.display = "none";
 	const t0 = Date.now();
 	let phase = "starting";
-	setInterval(() => { if ($("go").disabled) setStatus(`${phase}… ${((Date.now()-t0)/1000).toFixed(0)}s`); }, 1000);
+	const timer = setInterval(() => { if ($("go").disabled) setStatus(`${phase}… ${((Date.now()-t0)/1000).toFixed(0)}s`); }, 1000);
 	const addRound = (ev2) => {
 		const div = document.createElement("div");
 		div.className = "round"; div.id = `round-${ev2.round}`;
@@ -79,8 +79,13 @@ $("form").addEventListener("submit", async ev => {
 		const res = await fetch("/advice/run/stream", {method: "POST",
 			headers: {"Content-Type": "application/json"},
 			body: JSON.stringify({character: $("character").value, description: $("description").value,
-				prompt: $("prompt").value, engine: $("engine").value === "novelai" ? "novelai" : $("engine").value,
+				prompt: $("prompt").value, engine: $("engine").value,
 				rounds: parseInt($("rounds").value, 10)})});
+		if (!res.ok || !res.body) {
+			const err = await res.json().catch(() => ({}));
+			setStatus(`error ${res.status}: ${err.error || "request failed"}`, true);
+			return;
+		}
 		const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
 		while (true) {
 			const {done, value} = await reader.read(); if (done) break;
@@ -111,6 +116,6 @@ $("form").addEventListener("submit", async ev => {
 			}
 		}
 	} catch (e) { setStatus("failed: " + e, true); }
-	finally { $("go").disabled = false; }
+	finally { clearInterval(timer); $("go").disabled = false; }
 });
 </script></body></html>
