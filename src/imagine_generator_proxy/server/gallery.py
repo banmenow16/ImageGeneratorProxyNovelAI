@@ -37,7 +37,13 @@ _STYLE = """
 	.card-body { padding:12px 14px; display:flex; flex-direction:column; gap:8px; flex:1; }
 	.label { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 	.prompt { font-family:Consolas,monospace; font-size:11.5px; line-height:1.45;
-		word-break:break-word; white-space:pre-wrap; }
+		word-break:break-word; white-space:pre-wrap; max-height:5.8em; overflow:hidden; }
+	.prompt.full { max-height:none; overflow:visible; }
+	.clamp-btn { background:none; border:0; color:var(--accent); font-size:11px;
+		padding:2px 0; cursor:pointer; text-align:left; }
+	.video-link { display:inline-block; background:rgba(231,163,62,.14); color:#e7a33e;
+		border-radius:6px; padding:5px 10px; font-size:11.5px; font-weight:600; }
+	.video-link:hover { background:rgba(231,163,62,.26); }
 	.negative { color:var(--neg); opacity:.85; font-size:11px; }
 	.run-link { display:inline-block; background:rgba(110,168,254,.12); color:var(--accent);
 		border-radius:6px; padding:5px 10px; font-size:11.5px; font-weight:600; }
@@ -120,10 +126,14 @@ async def folder_handler(request: web.Request) -> web.Response:
 
 	cards = []
 	for filename, prompt, negative, raw_prompt, date_label, _ in images:
-		prompt_html = (
-			f'<div><div class="label">prompt</div><div class="prompt">{_esc(prompt)}</div></div>'
-			if prompt else '<div><div class="label">prompt</div><div class="prompt">—</div></div>'
-		)
+		if prompt:
+			esc_prompt = _esc(prompt)
+			clamp = (f'<button class="clamp-btn" data-target="p">more ▾</button>'
+				if len(prompt) > 220 else "")
+			prompt_html = ('<div><div class="label">prompt</div>'
+				f'<div class="prompt">{esc_prompt}</div>{clamp}</div>')
+		else:
+			prompt_html = '<div><div class="label">prompt</div><div class="prompt">—</div></div>'
 		if negative is None:
 			negative_html = ('<div><div class="label">negative</div>'
 				'<div class="prompt negative">(not recorded)</div></div>')
@@ -148,12 +158,13 @@ async def folder_handler(request: web.Request) -> web.Response:
 			f'<div class="card"><img src="/cache/{_esc(character)}/{_esc(filename)}" alt="{_esc(filename)}">'
 			f'<div class="card-body">{prompt_html}{negative_html}'
 			f'<a class="run-link" href="{_esc(experiment_href)}">▶ run in experiment workbench</a>'
-		f'<a class="run-link" href="/video?src={_esc(digest)}&amp;character={_esc(character)}">🎬 animate</a>'
+		f'<a class="video-link" href="/video?src={_esc(digest)}&amp;character={_esc(character)}">🎬 animate</a>'
 			f'<div class="date">{_esc(date_label)}</div></div></div>'
 		)
 
 	body = '<div class="grid">' + "".join(cards) + "</div>" if images \
 		else "<p>No images found in this folder.</p>"
+	body += ("<script>document.addEventListener('click', e => {""const b = e.target.closest('.clamp-btn'); if (!b) return;""const p = b.previousElementSibling; p.classList.toggle('full');""b.textContent = p.classList.contains('full') ? 'less ▴' : 'more ▾';});</script>")
 
 	page = _PAGE.format(
 		title=f"{character} Images",
