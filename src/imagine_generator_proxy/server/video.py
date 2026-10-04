@@ -43,6 +43,9 @@ async def video_generate_stream_handler(request: web.Request) -> web.StreamRespo
 	backends = _video_backends(request.app)
 	backend_name = body.get("engine") or request.app.get("video_backend", "wan22")
 	backend = backends.get(backend_name)
+	if backend is not None and getattr(backend, "nsfw_blocked", False):
+		return web.json_response({"error": f"{backend_name} is disabled: NSFW-blocked "
+			"(empirically verified) — pick another engine"}, status=400)
 	if backend is None:
 		return web.json_response({"error": f"unknown video engine {backend_name!r}",
 			"available": sorted(backends)}, status=400)
@@ -147,9 +150,9 @@ async def video_engines_handler(request: web.Request) -> web.Response:
 	backends = _video_backends(request.app)
 	engines = [{"id": b.backend_name, "display": b.display_name,
 		"provider": type(b).__module__.rsplit(".", 1)[-1],
-		"nsfw_verified": bool(getattr(b, "nsfw_verified", False)),
-		"nsfw_blocked": bool(getattr(b, "nsfw_blocked", False))}
-		for b in backends.values()]
+		"nsfw_verified": bool(getattr(b, "nsfw_verified", False))}
+		for b in backends.values()
+		if not getattr(b, "nsfw_blocked", False)]  # hidden, code kept intact
 	default = request.app.get("video_backend", "wan22")
 	return web.json_response({"engines": engines, "default": default})
 

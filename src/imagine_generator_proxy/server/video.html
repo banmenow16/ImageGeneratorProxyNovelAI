@@ -52,7 +52,7 @@ fetch("/api/video-engines").then(r => r.json()).then(d => {
 	sel.innerHTML = "";
 	for (const e of d.engines) {
 		const o = document.createElement("option");
-		o.value = e.id; o.textContent = e.display + (e.nsfw_blocked ? " (NSFW blocked)" : e.nsfw_verified ? " ✓NSFW" : " (NSFW untested)");
+		o.value = e.id; o.textContent = e.display + (e.nsfw_verified ? " ✓NSFW" : " (NSFW untested)");
 		if (e.id === d.default) o.selected = true;
 		sel.appendChild(o);
 	}
