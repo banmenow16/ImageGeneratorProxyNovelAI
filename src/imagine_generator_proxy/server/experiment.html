@@ -267,22 +267,7 @@ $("form").addEventListener("submit", async (ev) => {
 			} else if (run) {
 				setStatus(`done in ${((Date.now() - startedAt) / 1000).toFixed(0)}s — run #${run.run_id}`);
 				renderRun(run);
-				const loadCharDesc = () => fetch(`/api/characters/${encodeURIComponent($("character").value.trim() || "default")}/description`)
-	.then(r => r.json()).then(d => { $("char-desc").value = d.description || ""; }).catch(() => {});
-let charDescTimer = null;
-$("char-desc").addEventListener("change", () => {
-	const name = $("character").value.trim() || "default";
-	const desc = $("char-desc").value.trim();
-	if (!desc) return;
-	fetch(`/api/characters/${encodeURIComponent(name)}/description`, {
-		method: "POST", headers: {"Content-Type": "application/json"},
-		body: JSON.stringify({description: desc})
-	}).then(r => r.json()).then(d => { if (d.saved) setStatus(`character description saved for ${name}`); })
-	.catch(() => setStatus("failed to save description", true));
-});
-$("character").addEventListener("change", () => { clearTimeout(charDescTimer); charDescTimer = setTimeout(loadCharDesc, 400); });
-loadCharDesc();
-loadHistory();
+				loadHistory();
 			}
 		}
 	};
