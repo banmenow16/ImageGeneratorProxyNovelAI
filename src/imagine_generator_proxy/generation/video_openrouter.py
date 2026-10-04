@@ -114,6 +114,8 @@ class Wan27Video(OpenRouterVideoGenerator):
 
 	backend_name = "or-wan27"
 	display_name = "Wan 2.7 (OpenRouter, $0.10/s)"
+	# verified 2026-10-03: AtlasCloud routing completed a topless-source i2v
+	nsfw_verified = True
 
 	def model_id(self) -> str:
 		return "alibaba/wan-2.7"
@@ -137,6 +139,8 @@ class Wan30Video(OpenRouterVideoGenerator):
 
 	backend_name = "or-wan30"
 	display_name = "Wan 3.0 (OpenRouter, $0.05/s)"
+	# verified 2026-10-03: Alibaba routing, "Green net check" rejected NSFW output
+	nsfw_blocked = True
 
 	def model_id(self) -> str:
 		return "alibaba/wan-3.0"

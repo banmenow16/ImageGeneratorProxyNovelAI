@@ -147,7 +147,8 @@ async def video_engines_handler(request: web.Request) -> web.Response:
 	backends = _video_backends(request.app)
 	engines = [{"id": b.backend_name, "display": b.display_name,
 		"provider": type(b).__module__.rsplit(".", 1)[-1],
-		"nsfw_verified": bool(getattr(b, "nsfw_verified", False))}
+		"nsfw_verified": bool(getattr(b, "nsfw_verified", False)),
+		"nsfw_blocked": bool(getattr(b, "nsfw_blocked", False))}
 		for b in backends.values()]
 	default = request.app.get("video_backend", "wan22")
 	return web.json_response({"engines": engines, "default": default})
