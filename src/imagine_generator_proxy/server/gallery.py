@@ -120,12 +120,12 @@ async def folder_handler(request: web.Request) -> web.Response:
 		digest = image_path.stem
 		prompt, negative, raw_prompt, first_appearance = metadata.get(digest, (None, None, None, None))
 		mtime = datetime.fromtimestamp(image_path.stat().st_mtime).isoformat(sep=" ", timespec="minutes")
-		images.append((image_path.name, prompt, negative, raw_prompt, first_appearance or mtime, image_path.stat().st_mtime))
+		images.append((image_path.name, image_path.stem, prompt, negative, raw_prompt, first_appearance or mtime, image_path.stat().st_mtime))
 
-	images.sort(key=lambda item: item[5], reverse=True)
+	images.sort(key=lambda item: item[6], reverse=True)
 
 	cards = []
-	for filename, prompt, negative, raw_prompt, date_label, _ in images:
+	for filename, digest, prompt, negative, raw_prompt, date_label, _ in images:
 		if prompt:
 			esc_prompt = _esc(prompt)
 			clamp = (f'<button class="clamp-btn" data-target="p">more ▾</button>'
