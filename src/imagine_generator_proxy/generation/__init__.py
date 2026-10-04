@@ -5,6 +5,7 @@ modules and expose them here."""
 from imagine_generator_proxy.generation.base import GeneratedImage, ImageGenerator
 from imagine_generator_proxy.generation.video_base import GeneratedVideo, VideoGenerator, VideoRequest
 from imagine_generator_proxy.generation.video_civitai import Ltx2Video, Wan22Video, Wan26Video
+from imagine_generator_proxy.generation.video_openrouter import Wan26VideoOR, Wan27Video, Wan30Video
 from imagine_generator_proxy.generation.civitai import (
 	CivitaiGenerator,
 	IllustriousGenerator,
@@ -18,4 +19,5 @@ __all__ = [
 	"ImageGenerationType", "CivitaiGenerator", "IllustriousGenerator",
 	"PonyV6Generator", "NoobAIGenerator",
 	"GeneratedVideo", "VideoGenerator", "VideoRequest", "Wan22Video", "Wan26Video", "Ltx2Video",
+	"Wan26VideoOR", "Wan27Video", "Wan30Video",
 ]

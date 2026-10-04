@@ -24,6 +24,9 @@ from novelai_api.NovelAI_API import NovelAIAPI
 
 from imagine_generator_proxy.generation import (  # noqa: F401
 	Ltx2Video,
+	Wan26VideoOR,
+	Wan27Video,
+	Wan30Video,
 	Wan22Video,
 	Wan26Video,
 	IllustriousGenerator,
@@ -249,6 +252,11 @@ async def on_startup(app: web.Application) -> None:
 	if civitai_key_v:
 		for vcls in (Wan22Video, Wan26Video, Ltx2Video):
 			video_backends[vcls.backend_name] = vcls(api_key=str(civitai_key_v), session=session)
+	# separate loop so mypy keeps distinct class-tuple types
+	or_key = config.get("openRouterToken") or config.get("openrouter_api_key")
+	if or_key:
+		for vcls in (Wan27Video, Wan26VideoOR, Wan30Video):  # type: ignore[assignment]
+			video_backends[vcls.backend_name] = vcls(api_key=str(or_key), session=session)
 	app["video_backends"] = video_backends
 	app["video_backend"] = str(config.get("video_backend", "wan22"))
 	app["videos_dir"] = DATA_DIR / "videos"

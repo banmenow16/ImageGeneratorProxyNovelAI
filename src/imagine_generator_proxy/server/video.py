@@ -143,7 +143,18 @@ async def video_gallery_handler(request: web.Request) -> web.Response:
 	return web.Response(text=page, content_type="text/html")
 
 
+async def video_engines_handler(request: web.Request) -> web.Response:
+	backends = _video_backends(request.app)
+	engines = [{"id": b.backend_name, "display": b.display_name,
+		"provider": type(b).__module__.rsplit(".", 1)[-1],
+		"nsfw_verified": bool(getattr(b, "nsfw_verified", False))}
+		for b in backends.values()]
+	default = request.app.get("video_backend", "wan22")
+	return web.json_response({"engines": engines, "default": default})
+
+
 def add_routes(app: web.Application) -> None:
+	app.router.add_get("/api/video-engines", video_engines_handler)
 	app.router.add_get("/video", video_page_handler)
 	app.router.add_post("/video/generate/stream", video_generate_stream_handler)
 	app.router.add_get("/video/gallery", video_gallery_handler)

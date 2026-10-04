@@ -25,11 +25,7 @@ button:disabled{opacity:.5;cursor:wait;animation:pulse 1.2s ease-in-out infinite
 		<label>Source image digest</label><input type="text" id="src" placeholder="64-char digest from the image gallery link">
 		<label>Source preview</label><img id="srcPreview">
 		<label>Motion prompt</label><textarea id="prompt" placeholder="e.g. gentle breathing, hair swaying softly, slow camera push-in"></textarea>
-		<label>Engine</label><select id="engine">
-			<option value="wan22" selected>Wan 2.2 (bang for buck)</option>
-			<option value="wan26">Wan 2.6 (quality)</option>
-			<option value="ltx2">LTX-2 (fast)</option>
-		</select>
+		<label>Engine</label><select id="engine"><option value="" disabled>loading…</option></select>
 		<label>Duration</label><select id="duration"><option>3</option><option selected>5</option><option>8</option><option>10</option></select>
 		<label></label><button id="go">Generate video</button>
 	</form>
@@ -51,6 +47,16 @@ const refreshPreview = () => {
 	if (d && c) { img.src = `/cache/${c}/${d}.png`; img.style.display = "block"; } else img.style.display = "none";
 };
 $("src").addEventListener("input", refreshPreview); $("character").addEventListener("input", refreshPreview); refreshPreview();
+fetch("/api/video-engines").then(r => r.json()).then(d => {
+	const sel = $("engine");
+	sel.innerHTML = "";
+	for (const e of d.engines) {
+		const o = document.createElement("option");
+		o.value = e.id; o.textContent = e.display + (e.nsfw_verified ? "" : " (NSFW untested)");
+		if (e.id === d.default) o.selected = true;
+		sel.appendChild(o);
+	}
+}).catch(() => {});
 $("form").addEventListener("submit", async ev => {
 	ev.preventDefault();
 	$("go").disabled = true; $("result").innerHTML = ""; setStatus("uploading source image…");
