@@ -154,6 +154,8 @@ async def video_engines_handler(request: web.Request) -> web.Response:
 		for b in backends.values()
 		if not getattr(b, "nsfw_blocked", False)]  # hidden, code kept intact
 	default = request.app.get("video_backend", "wan22")
+	if default not in {e["id"] for e in engines} and engines:
+		default = engines[0]["id"]  # configured default hidden/disabled
 	return web.json_response({"engines": engines, "default": default})
 
 

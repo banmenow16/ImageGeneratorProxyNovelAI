@@ -120,6 +120,9 @@ class Wan22Video(CivitaiVideoGenerator):
 
 	backend_name = "wan22"
 	display_name = "Wan 2.2 (Civitai)"
+	# NSFW Buzz on Civitai requires crypto top-up (user won't); disabled from
+	# the page — flip to re-enable. Code stays fully intact.
+	nsfw_blocked = True
 
 	def engine_payload(self) -> dict:
 		return {"engine": "wan", "version": "v2.2"}
@@ -130,6 +133,7 @@ class Wan26Video(CivitaiVideoGenerator):
 
 	backend_name = "wan26"
 	display_name = "Wan 2.6 (Civitai)"
+	nsfw_blocked = True  # see Wan22Video note
 
 	def engine_payload(self) -> dict:
 		return {"engine": "wan", "version": "v2.6"}
@@ -140,6 +144,7 @@ class Ltx2Video(CivitaiVideoGenerator):
 
 	backend_name = "ltx2"
 	display_name = "LTX-2 (Civitai)"
+	nsfw_blocked = True  # see Wan22Video note
 
 	def engine_payload(self) -> dict:
 		return {"engine": "ltx2", "operation": "createVideo"}
