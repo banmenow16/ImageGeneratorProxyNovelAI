@@ -33,6 +33,7 @@ class CivitaiVideoGenerator(VideoGenerator):
 	display_name = "Civitai video"
 
 	def __init__(self, api_key: str, session: ClientSession, timeout: float = 600.0):
+		self.last_error = ""
 		self._api_key = api_key
 		self._session = session
 		self._timeout = timeout
@@ -73,8 +74,9 @@ class CivitaiVideoGenerator(VideoGenerator):
 					raise RuntimeError(f"video download HTTP {dl.status}")
 				return GeneratedVideo(name="video.mp4", data=await dl.read(),
 					content_type="video/mp4")
-		except Exception:
+		except Exception as e:
 			LOGGER.exception("Civitai video generation failed for %s", self.display_name)
+			self.last_error = str(e)[:200]
 			return None
 
 	async def _upload_image(self, path) -> Optional[str]:

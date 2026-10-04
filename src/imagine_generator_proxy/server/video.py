@@ -70,7 +70,10 @@ async def video_generate_stream_handler(request: web.Request) -> web.StreamRespo
 		"duration": duration})
 	video = await backend.generate_video(video_request)
 	if video is None:
-		await emit({"event": "error", "error": "video generation failed"})
+		detail = getattr(backend, "last_error", "") or "video generation failed"
+		if "insufficientBuzz" in detail:
+			detail = "insufficient Buzz on your Civitai account — top up at civitai.com/buzz"
+		await emit({"event": "error", "error": detail})
 		await response.write_eof()
 		return response
 
