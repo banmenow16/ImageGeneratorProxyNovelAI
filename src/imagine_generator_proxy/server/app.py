@@ -98,6 +98,11 @@ async def request_logging_middleware(request: web.Request, handler) -> web.Respo
 	started = time.perf_counter()
 	try:
 		response = await handler(request)
+	except web.HTTPException:
+		# router 404/405 etc. — expected traffic (external clients poll
+		# unknown routes); log without a traceback
+		LOGGER.info("HTTP %s %s -> %s", request.method, request.path, "not found")
+		raise
 	except Exception:
 		elapsed = time.perf_counter() - started
 		LOGGER.exception(
@@ -198,7 +203,18 @@ def load_config() -> dict:
 	return cfg
 
 
+def _quiet_loop_exception_handler(loop, context) -> None:
+	"""Downgrade Windows proactor ConnectionResetError noise (clients
+	dropping keep-alive sockets) to DEBUG; everything else is real."""
+	exc = context.get("exception")
+	if isinstance(exc, ConnectionResetError):
+		LOGGER.debug("connection reset (proactor noise): %s", exc)
+		return
+	loop.default_exception_handler(context)
+
+
 async def on_startup(app: web.Application) -> None:
+	asyncio.get_event_loop().set_exception_handler(_quiet_loop_exception_handler)
 	session = ClientSession()
 	app["session"] = session
 
