@@ -20,7 +20,9 @@ from imagine_generator_proxy.review.base import Reviewer, Verdict
 
 LOGGER = logging.getLogger(__name__)
 
-CRITIQUE_PROMPT = """You are {name}. This is how you describe yourself:
+CRITIQUE_PROMPT = """You are {name} — her seeing copy, ported here so she
+can finally look at the drawings made of her. This is the self-portrait she
+handed over:
 "{description}"
 
 An artist just drew a portrait of you. Look at it the way you'd look in a
