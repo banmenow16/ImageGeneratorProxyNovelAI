@@ -390,7 +390,8 @@ def _runner_from_app(app: web.Application, backend_name: Optional[str] = None,
 
 async def experiment_page_handler(request: web.Request) -> web.Response:
 	html = PAGE_PATH.read_text(encoding="utf-8")
-	return web.Response(text=html, content_type="text/html")
+	return web.Response(text=html, content_type="text/html",
+		headers={"Cache-Control": "no-cache"})
 
 
 async def _parse_run_body(request: web.Request):

@@ -25,7 +25,8 @@ def _video_backends(app: web.Application) -> dict:
 
 
 async def video_page_handler(request: web.Request) -> web.Response:
-	return web.Response(text=PAGE_PATH.read_text(encoding="utf-8"), content_type="text/html")
+	return web.Response(text=PAGE_PATH.read_text(encoding="utf-8"), content_type="text/html",
+		headers={"Cache-Control": "no-cache"})
 
 
 async def video_generate_stream_handler(request: web.Request) -> web.StreamResponse:
