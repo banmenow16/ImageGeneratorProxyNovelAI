@@ -218,7 +218,8 @@ class OpenRouterReviewer(Reviewer):
 		return (resp.choices[0].message.content or "").strip()
 
 	async def review(self, image: bytes, prompt: str, attempt: int = 0,
-			previous_notes: str = "", character: str = "") -> Verdict:
+			previous_notes: str = "", character: str = "",
+			context_note: str = "") -> Verdict:
 		image_b64 = base64.b64encode(image).decode()
 
 		# Session context: on regenerations, tell the reviewer which attempt
@@ -226,6 +227,9 @@ class OpenRouterReviewer(Reviewer):
 		# fix instead of re-assessing blind. History hints add what has and
 		# hasn't worked for this character recently.
 		qc_prompt = QC_PROMPT
+		if context_note:
+			# persona/character grounding block (e.g. CharacterReviewer)
+			qc_prompt += " " + context_note
 		history = await asyncio.to_thread(self._recent_history, character) if self._db_path else ""
 		if history:
 			qc_prompt += history

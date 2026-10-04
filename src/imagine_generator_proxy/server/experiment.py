@@ -32,6 +32,7 @@ from imagine_generator_proxy.prompts.massager import (
 	sanitize_fix_tags,
 )
 from imagine_generator_proxy.review.base import NoopReviewer, Reviewer, Verdict
+from imagine_generator_proxy.review.character import CharacterReviewer
 from imagine_generator_proxy.review.openrouter import OpenRouterReviewer
 from imagine_generator_proxy.server.service import sanitize_character
 from imagine_generator_proxy.server.storage import Database
@@ -365,17 +366,22 @@ def _run_payload(conn: sqlite3.Connection, run_id: int) -> Optional[dict]:
 
 # --- HTTP handlers (thin adapters) ---
 
-def _runner_from_app(app: web.Application, backend_name: Optional[str] = None) -> ExperimentRunner:
+def _runner_from_app(app: web.Application, backend_name: Optional[str] = None,
+		character_name: str = "default") -> ExperimentRunner:
 	backends: dict = app.get("backends") or {}
 	backend = backends.get(backend_name) if backend_name else None
 	if backend is None:
 		backend = backends.get(app.get("generation_backend", "novelai")) \
 			or backends.get("novelai")
 	assert backend is not None, "no generation backends registered"
+	reviewer: Optional[Reviewer] = app.get("experiment_reviewer")
+	character = Database(app["db_path"]).get_character(character_name)
+	if reviewer is not None and character and character.get("description"):
+		reviewer = CharacterReviewer(reviewer, character_name, character["description"])
 	return ExperimentRunner(
 		massager=backend.massager,
 		generator=backend.generator,
-		reviewer=app.get("experiment_reviewer"),
+		reviewer=reviewer,
 		config=app.get("config", {}),
 		cache_dir=app["cache_dir"],
 		database=Database(app["db_path"]),
@@ -428,7 +434,8 @@ async def experiment_run_handler(request: web.Request) -> web.Response:
 	if error is not None:
 		return error
 
-	result = await _runner_from_app(request.app, backend).run(**params)
+	result = await _runner_from_app(request.app, backend,
+		str(params.get("character") or "default")).run(**params)
 	if "blocked" in result:
 		return web.json_response({"error": "prompt blocked by safety filter", **result["blocked"]}, status=400)
 	result["reviewer_available"] = bool(request.app.get("experiment_reviewer"))
@@ -453,7 +460,8 @@ async def experiment_run_stream_handler(request: web.Request) -> web.StreamRespo
 	async def on_event(event: dict) -> None:
 		await response.write((json.dumps(event) + "\n").encode("utf-8"))
 
-	result = await _runner_from_app(request.app, backend).run(**params, on_event=on_event)
+	result = await _runner_from_app(request.app, backend,
+		str(params.get("character") or "default")).run(**params, on_event=on_event)
 	result["reviewer_available"] = bool(request.app.get("experiment_reviewer"))
 	await response.write((json.dumps({"event": "done", "run": result}) + "\n").encode("utf-8"))
 	await response.write_eof()
@@ -496,7 +504,24 @@ async def experiment_run_detail_handler(request: web.Request) -> web.Response:
 	return web.json_response(payload)
 
 
+async def character_description_handler(request: web.Request) -> web.Response:
+	name = request.match_info["name"]
+	database = Database(request.app["db_path"])
+	if request.method == "GET":
+		character = database.get_character(name)
+		return web.json_response({"name": name,
+			"description": (character or {}).get("description") or ""})
+	body = await request.json()
+	description = str(body.get("description") or "").strip()
+	if not description:
+		return web.json_response({"error": "description must be non-empty"}, status=400)
+	database.set_character_description(name, description)
+	return web.json_response({"name": name, "description": description, "saved": True})
+
+
 def add_routes(app: web.Application) -> None:
+	app.router.add_get("/api/characters/{name}/description", character_description_handler)
+	app.router.add_post("/api/characters/{name}/description", character_description_handler)
 	app.router.add_get("/experiment", experiment_page_handler)
 	app.router.add_post("/experiment/run", experiment_run_handler)
 	app.router.add_post("/experiment/run/stream", experiment_run_stream_handler)

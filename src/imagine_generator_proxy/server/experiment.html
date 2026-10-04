@@ -73,6 +73,8 @@
 	<form id="form">
 		<label for="character">Character</label>
 		<input type="text" id="character" value="Naimi">
+		<label for="char-desc">Character description <span style="opacity:.6">(optional — reviewer judges likeness against it)</span></label>
+		<textarea id="char-desc" placeholder="How she sees herself — the RP card's appearance section works well. Saved per character name."></textarea>
 		<label for="backend">Generator</label>
 		<select id="backend">
 			<option value="novelai" selected>NovelAI v4.5</option>
@@ -265,7 +267,22 @@ $("form").addEventListener("submit", async (ev) => {
 			} else if (run) {
 				setStatus(`done in ${((Date.now() - startedAt) / 1000).toFixed(0)}s — run #${run.run_id}`);
 				renderRun(run);
-				loadHistory();
+				const loadCharDesc = () => fetch(`/api/characters/${encodeURIComponent($("character").value.trim() || "default")}/description`)
+	.then(r => r.json()).then(d => { $("char-desc").value = d.description || ""; }).catch(() => {});
+let charDescTimer = null;
+$("char-desc").addEventListener("change", () => {
+	const name = $("character").value.trim() || "default";
+	const desc = $("char-desc").value.trim();
+	if (!desc) return;
+	fetch(`/api/characters/${encodeURIComponent(name)}/description`, {
+		method: "POST", headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({description: desc})
+	}).then(r => r.json()).then(d => { if (d.saved) setStatus(`character description saved for ${name}`); })
+	.catch(() => setStatus("failed to save description", true));
+});
+$("character").addEventListener("change", () => { clearTimeout(charDescTimer); charDescTimer = setTimeout(loadCharDesc, 400); });
+loadCharDesc();
+loadHistory();
 			}
 		}
 	};
@@ -312,6 +329,21 @@ $("form").addEventListener("submit", async (ev) => {
 	if (params.get("prompt")) setStatus("form pre-filled from a gallery image — adjust and run");
 })();
 
+const loadCharDesc = () => fetch(`/api/characters/${encodeURIComponent($("character").value.trim() || "default")}/description`)
+	.then(r => r.json()).then(d => { $("char-desc").value = d.description || ""; }).catch(() => {});
+let charDescTimer = null;
+$("char-desc").addEventListener("change", () => {
+	const name = $("character").value.trim() || "default";
+	const desc = $("char-desc").value.trim();
+	if (!desc) return;
+	fetch(`/api/characters/${encodeURIComponent(name)}/description`, {
+		method: "POST", headers: {"Content-Type": "application/json"},
+		body: JSON.stringify({description: desc})
+	}).then(r => r.json()).then(d => { if (d.saved) setStatus(`character description saved for ${name}`); })
+	.catch(() => setStatus("failed to save description", true));
+});
+$("character").addEventListener("change", () => { clearTimeout(charDescTimer); charDescTimer = setTimeout(loadCharDesc, 400); });
+loadCharDesc();
 loadHistory();
 </script>
 <script>

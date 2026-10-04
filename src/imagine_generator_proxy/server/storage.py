@@ -60,7 +60,16 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 			("fix_applied", "TEXT"), ("is_final", "INTEGER DEFAULT 0")):
 		if col not in review_cols:
 			conn.execute(f"ALTER TABLE reviews ADD COLUMN {col} {decl}")
-	# Experiment workbench: provenance for /experiment runs
+	# Character studio: per-character descriptions (persona-injected review),
+	# canonical tag blocks and advice for the RP bot (Phase 2)
+	conn.execute('''CREATE TABLE IF NOT EXISTS characters (
+		name TEXT PRIMARY KEY,
+		description TEXT,
+		canonical_tags TEXT,
+		advice TEXT,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)''')
+	# Experiment workbench: provenance for /experiment runsExperiment workbench: provenance for /experiment runs
 	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_runs (
 		id INTEGER PRIMARY KEY,
 		character TEXT,
@@ -142,6 +151,26 @@ class Database:
 		except Exception:
 			LOGGER.exception("Failed to store generated image in database")
 
+
+	def get_character(self, name: str) -> Optional[dict]:
+		conn = self.connect()
+		try:
+			conn.row_factory = sqlite3.Row
+			row = conn.execute("SELECT * FROM characters WHERE name = ?", (name,)).fetchone()
+			return dict(row) if row else None
+		finally:
+			conn.close()
+
+	def set_character_description(self, name: str, description: str) -> None:
+		conn = self.connect()
+		try:
+			conn.execute(
+				"INSERT INTO characters (name, description, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)"
+				" ON CONFLICT(name) DO UPDATE SET description = excluded.description,"
+				" updated_at = CURRENT_TIMESTAMP", (name, description))
+			conn.commit()
+		finally:
+			conn.close()
 	def log_review_outcome(self, digest: str, character: str, verdict: Verdict,
 			attempt: int = 0, tags: str = "", prompt_used: str = "",
 			negative_used: str = "", fix_applied: str = "",
