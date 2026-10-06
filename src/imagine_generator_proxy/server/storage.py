@@ -69,6 +69,44 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 		advice TEXT,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	)''')
+	# Mirror advice: run/stage/round tracking for the wardrobe system
+	conn.execute('''CREATE TABLE IF NOT EXISTS advice_runs (
+		id INTEGER PRIMARY KEY,
+		character TEXT NOT NULL,
+		engine TEXT,
+		description_hash TEXT,
+		identity_tags TEXT,
+		negative_tags TEXT,
+		advice TEXT,
+		converged_count INTEGER DEFAULT 0,
+		total_stages INTEGER DEFAULT 5,
+		started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		finished_at TIMESTAMP
+	)''')
+	conn.execute('''CREATE TABLE IF NOT EXISTS advice_stages (
+		id INTEGER PRIMARY KEY,
+		run_id INTEGER NOT NULL REFERENCES advice_runs(id),
+		stage_id TEXT NOT NULL,
+		stage_label TEXT,
+		status TEXT DEFAULT "pending",
+		attempts INTEGER DEFAULT 0,
+		notes TEXT,
+		final_verdict TEXT
+	)''')
+	conn.execute('''CREATE TABLE IF NOT EXISTS advice_rounds (
+		id INTEGER PRIMARY KEY,
+		stage_db_id INTEGER NOT NULL REFERENCES advice_stages(id),
+		run_id INTEGER NOT NULL REFERENCES advice_runs(id),
+		retry_number INTEGER NOT NULL,
+		full_prompt TEXT,
+		identity_tags_used TEXT,
+		critique_verdict TEXT,
+		critique_right TEXT,
+		critique_wrong TEXT,
+		critique_rewritten TEXT,
+		critique_feel TEXT,
+		image_path TEXT
+	)''')
 	# Experiment workbench: provenance for /experiment runsExperiment workbench: provenance for /experiment runs
 	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_runs (
 		id INTEGER PRIMARY KEY,
@@ -171,6 +209,73 @@ class Database:
 			conn.commit()
 		finally:
 			conn.close()
+
+	def start_advice_run(self, character: str, engine: str, description_hash: str) -> int:
+		conn = self.connect()
+		try:
+			cur = conn.execute(
+				"INSERT INTO advice_runs (character, engine, description_hash)"
+				" VALUES (?, ?, ?)", (character, engine, description_hash))
+			conn.commit()
+			return int(cur.lastrowid or 0)
+		finally:
+			conn.close()
+
+	def start_advice_stage(self, run_id: int, stage_id: str, stage_label: str) -> int:
+		conn = self.connect()
+		try:
+			cur = conn.execute(
+				"INSERT INTO advice_stages (run_id, stage_id, stage_label)"
+				" VALUES (?, ?, ?)", (run_id, stage_id, stage_label))
+			conn.commit()
+			return int(cur.lastrowid or 0)
+		finally:
+			conn.close()
+
+	def record_advice_round(self, stage_db_id: int, run_id: int, retry: int,
+			full_prompt: str, identity_tags: str, verdict: str,
+			right: str, wrong: str, rewritten: str, feel: str,
+			image_path: str) -> None:
+		conn = self.connect()
+		try:
+			conn.execute(
+				"INSERT INTO advice_rounds (stage_db_id, run_id, retry_number,"
+				" full_prompt, identity_tags_used, critique_verdict,"
+				" critique_right, critique_wrong, critique_rewritten,"
+				" critique_feel, image_path)"
+				" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				(stage_db_id, run_id, retry, full_prompt[:2000],
+					identity_tags[:2000], verdict, right[:1000],
+					wrong[:1000], rewritten[:2000], feel[:500], image_path))
+			conn.commit()
+		finally:
+			conn.close()
+
+	def finish_advice_stage(self, stage_db_id: int, status: str,
+			attempts: int, notes: str, final_verdict: str) -> None:
+		conn = self.connect()
+		try:
+			conn.execute(
+				"UPDATE advice_stages SET status = ?, attempts = ?,"
+				" notes = ?, final_verdict = ? WHERE id = ?",
+				(status, attempts, notes[:1000], final_verdict, stage_db_id))
+			conn.commit()
+		finally:
+			conn.close()
+
+	def finish_advice_run(self, run_id: int, identity_tags: str,
+			negative_tags: str, advice: str, converged: int, total: int) -> None:
+		conn = self.connect()
+		try:
+			conn.execute(
+				"UPDATE advice_runs SET identity_tags = ?, negative_tags = ?,"
+				" advice = ?, converged_count = ?, total_stages = ?,"
+				" finished_at = CURRENT_TIMESTAMP WHERE id = ?",
+				(identity_tags, negative_tags, advice, converged, total, run_id))
+			conn.commit()
+		finally:
+			conn.close()
+
 	def log_review_outcome(self, digest: str, character: str, verdict: Verdict,
 			attempt: int = 0, tags: str = "", prompt_used: str = "",
 			negative_used: str = "", fix_applied: str = "",

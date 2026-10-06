@@ -10,6 +10,7 @@ for the RP bot.
 from __future__ import annotations
 
 import json
+import sqlite3
 import logging
 from pathlib import Path
 from typing import Optional
@@ -114,8 +115,13 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 
 	database = Database(request.app["db_path"])
 	database.set_character_description(name, description)
-	character_dir = Path(request.app["videos_dir"]).parent / "advice" / name
-	character_dir.mkdir(parents=True, exist_ok=True)
+
+	# start a tracked run with a unique id for folder isolation
+	import hashlib
+	desc_hash = hashlib.md5(description.encode()).hexdigest()[:8]
+	run_id = database.start_advice_run(name, backend_name, desc_hash)
+	run_dir = Path(request.app["videos_dir"]).parent / "advice" / "runs" / str(run_id)
+	run_dir.mkdir(parents=True, exist_ok=True)
 
 	# --- derive identity tags if no starting prompt ---
 	identity_tags: str = prompt
@@ -141,14 +147,14 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		stage_composition = stage["composition"]
 		stage_result = {"id": stage_id, "label": stage_label, "status": "skipped",
 			"attempts": 0, "notes": ""}
+		stage_db_id = database.start_advice_stage(run_id, stage_id, stage_label)
 		await emit({"event": "stage", "phase": "start", "stage": stage_id,
-			"label": stage_label})
+			"label": stage_label, "run_id": run_id})
 
 		for retry in range(MAX_RETRIES):
 			stage_result["attempts"] = retry + 1
 			# combine identity + this stage's composition
 			full_prompt = f"{identity_tags}, {stage_composition}"
-			image_counter += 1
 
 			await emit({"event": "step", "phase": "generating", "stage": stage_id,
 				"retry": retry + 1, "prompt": full_prompt})
@@ -166,11 +172,12 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 				await emit({"event": "step", "phase": "skipped", "stage": stage_id})
 				break
 
-			img_path = character_dir / f"{stage_id}_r{retry + 1}.png"
+			img_path = run_dir / f"{stage_id}_r{retry + 1}.png"
 			img_path.write_bytes(bytes(image.data))
-			url = f"/advice-files/{name}/{stage_id}_r{retry + 1}.png"
+			img_rel = f"runs/{run_id}/{stage_id}_r{retry + 1}.png"
+			url = f"/advice-files/runs/{run_id}/{stage_id}_r{retry + 1}.png"
 			await emit({"event": "image", "stage": stage_id, "retry": retry + 1,
-				"url": url, "prompt": massaged.effective})
+				"url": url, "prompt": massaged.effective, "run_id": run_id})
 
 			await emit({"event": "step", "phase": "critiquing", "stage": stage_id,
 				"retry": retry + 1})
@@ -185,6 +192,14 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			all_critiques.append(critique)
 			await emit({"event": "critique", "stage": stage_id, "retry": retry + 1,
 				**critique})
+
+			# record this round in the database
+			database.record_advice_round(stage_db_id, run_id, retry + 1,
+				full_prompt, identity_tags,
+				critique.get("verdict", ""),
+				critique.get("right", ""), critique.get("wrong", ""),
+				critique.get("rewritten", ""), critique.get("feel", ""),
+				img_rel)
 
 			if critique["verdict"] == "yes":
 				stage_result["status"] = "converged"
@@ -209,6 +224,10 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 				stage_result["notes"] = last.get("wrong", "did not converge")
 
 		stage_results.append(stage_result)
+		attempts_used: int = stage_result["attempts"]  # type: ignore[assignment]
+		database.finish_advice_stage(stage_db_id, str(stage_result["status"]),
+			attempts_used, str(stage_result["notes"]),
+			str(critique.get("verdict", "")) if critique else "")
 		await emit({"event": "stage", "phase": "done", "stage": stage_id,
 			"status": stage_result["status"], "attempts": stage_result["attempts"]})
 
@@ -222,7 +241,10 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		description, rounds_summary, final_tags=identity_tags,
 		final_negative=current_negative)
 
-	# save
+	# save to advice_runs + characters
+	converged_count = sum(1 for s in stage_results if s["status"] == "converged")
+	database.finish_advice_run(run_id, identity_tags, current_negative,
+		advice_text or "", converged_count, len(STAGES))
 	conn = database.connect()
 	try:
 		conn.execute("UPDATE characters SET canonical_tags = ?, advice = ?,"
@@ -233,7 +255,8 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		conn.close()
 
 	converged_count = sum(1 for s in stage_results if s["status"] == "converged")
-	await emit({"event": "done", "final_prompt": identity_tags,
+	await emit({"event": "done", "run_id": run_id,
+		"final_prompt": identity_tags,
 		"final_negative": current_negative, "advice": advice_text or "",
 		"stage_results": stage_results,
 		"satisfied": converged_count == len(STAGES),
@@ -268,6 +291,66 @@ async def derive_identity_tags(api_key: str, model: str, name: str,
 		return ""
 
 
+async def advice_runs_handler(request: web.Request) -> web.Response:
+	"""Query past Mirror runs for aggregate analysis."""
+	conn = sqlite3.connect(str(request.app["db_path"]))
+	conn.row_factory = sqlite3.Row
+	try:
+		character = request.query.get("character")
+		if character:
+			runs = conn.execute(
+				"SELECT * FROM advice_runs WHERE character = ? ORDER BY id DESC",
+				(character,)).fetchall()
+		else:
+			runs = conn.execute(
+				"SELECT * FROM advice_runs ORDER BY id DESC LIMIT 50").fetchall()
+
+		out = []
+		for run in runs:
+			stages = conn.execute(
+				"SELECT stage_id, stage_label, status, attempts, notes, final_verdict"
+				" FROM advice_stages WHERE run_id = ? ORDER BY id",
+				(run["id"],)).fetchall()
+			out.append({
+				"run_id": run["id"], "character": run["character"],
+				"engine": run["engine"],
+				"identity_tags": run["identity_tags"],
+				"advice": run["advice"],
+				"converged_count": run["converged_count"],
+				"total_stages": run["total_stages"],
+				"started_at": run["started_at"],
+				"finished_at": run["finished_at"],
+				"stages": [dict(s) for s in stages],
+			})
+		return web.json_response({"runs": out})
+	finally:
+		conn.close()
+
+
+async def advice_run_detail_handler(request: web.Request) -> web.Response:
+	"""Full detail for one run: all stages and every round's prompt/critique."""
+	run_id = int(request.match_info["run_id"])
+	conn = sqlite3.connect(str(request.app["db_path"]))
+	conn.row_factory = sqlite3.Row
+	try:
+		run = conn.execute("SELECT * FROM advice_runs WHERE id = ?", (run_id,)).fetchone()
+		if run is None:
+			return web.json_response({"error": "run not found"}, status=404)
+		stages = conn.execute(
+			"SELECT * FROM advice_stages WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
+		rounds = conn.execute(
+			"SELECT * FROM advice_rounds WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
+		return web.json_response({
+			"run": dict(run),
+			"stages": [dict(s) for s in stages],
+			"rounds": [dict(r) for r in rounds],
+		})
+	finally:
+		conn.close()
+
+
 def add_routes(app: web.Application) -> None:
 	app.router.add_get("/advice", advice_page_handler)
 	app.router.add_post("/advice/run/stream", advice_run_stream_handler)
+	app.router.add_get("/api/advice/runs", advice_runs_handler)
+	app.router.add_get("/api/advice/runs/{run_id}", advice_run_detail_handler)
