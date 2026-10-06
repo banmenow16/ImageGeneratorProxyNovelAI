@@ -29,6 +29,21 @@ PAGE_PATH = Path(__file__).parent / "advice.html"
 CRITIQUE_MODEL_DEFAULT = "x-ai/grok-4.7"  # persona voice benefits from the strong model
 
 
+def _dedupe_tags(tag_string: str) -> str:
+	"""Collapse duplicate tags (case-insensitive), keeping first occurrence."""
+	seen = set()
+	out = []
+	for tag in tag_string.split(","):
+		tag = tag.strip()
+		if not tag:
+			continue
+		key = tag.lower()
+		if key not in seen:
+			seen.add(key)
+			out.append(tag)
+	return ", ".join(out)
+
+
 async def advice_page_handler(request: web.Request) -> web.Response:
 	html = PAGE_PATH.read_text(encoding="utf-8")
 	return web.Response(text=html, content_type="text/html",
@@ -147,6 +162,11 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			current_prompt = current_prompt + ", " + ", ".join(add)
 		if negate:
 			current_negative = (current_negative + ", " + ", ".join(negate)).strip(", ")
+		# deduplicate: rounds accumulate near-synonymous tags (heavy breasts /
+		# low-hanging breasts / massive breasts...) that confuse the model and
+		# dilute later tags — collapse to first occurrence, preserving order
+		current_prompt = _dedupe_tags(current_prompt)
+		current_negative = _dedupe_tags(current_negative)
 
 	# she writes her advice for the RP bot based on the rounds
 	await emit({"event": "step", "phase": "advising"})
