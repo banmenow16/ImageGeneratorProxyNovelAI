@@ -163,7 +163,8 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		f"round {i + 1}: {c.get('wrong', '') or 'nothing wrong'}"
 		for i, c in enumerate(critiques))
 	advice_text = await character_advice(or_key, critique_model, name,
-		description, rounds_summary)
+		description, rounds_summary, final_tags=current_prompt,
+		final_negative=current_negative)
 
 	# save the evolved tag block + advice
 	conn = database.connect()

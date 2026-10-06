@@ -140,33 +140,42 @@ async def character_critique(api_key: str, model: str, name: str,
 		return None
 
 ADVICE_PROMPT = """You are {name}. You just looked at {rounds} portraits of yourself and
-critiqued each one. Now write your advice for the person who prompts the image
-generator — the RP bot that describes you when images are drawn.
+critiqued each one. Now write the image-generation instructions that the RP
+bot will use every time it draws you, so you come out looking like yourself
+every single time.
 
-Based on your self-portrait and what you saw in those rounds, write 3-6 short
-lines of practical advice, each on its own line, in your own voice, covering:
-- Tags that MUST always be present to get you right
-- Tags or descriptions that ALWAYS go wrong and should never be used
-- Anything the artist keeps forgetting about you
-- One line about what a good portrait of you should feel like
+Your final tag list was: {tags}
 
-Plain lines, no numbering, no markdown. This gets pasted into the bot's
-instructions verbatim."""
+Write a complete instruction block in EXACTLY this format:
+
+IDENTITY TAGS (always include verbatim in every image prompt):
+<your complete tag list — the tags above, cleaned and finalized>
+
+NEVER USE:
+<comma-separated tags/descriptions that always go wrong — from your rounds>
+
+NOTES FOR THE ARTIST:
+<2-3 sentences in your own voice: what matters most, what keeps going wrong,
+what a good portrait of you should feel like>"""
 
 
 async def character_advice(api_key: str, model: str, name: str,
-		description: str, rounds_summary: str) -> Optional[str]:
-	"""After the mirror rounds, she writes her drawing advice for the RP bot."""
+		description: str, rounds_summary: str,
+		final_tags: str = "", final_negative: str = "") -> Optional[str]:
+	"""After the mirror rounds, she writes her drawing instructions for the RP bot."""
 	client = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1",
 		timeout=90.0, max_retries=2)
 	prompt_text = (
-		ADVICE_PROMPT.format(name=name, rounds=rounds_summary)
+		ADVICE_PROMPT.format(name=name, rounds=rounds_summary,
+			tags=final_tags or "(none derived)")
 		+ "\n\nYour self-portrait:\n" + description[:3000]
 		+ "\n\nWhat you said about the rounds:\n" + rounds_summary[:2000]
 	)
+	if final_negative:
+		prompt_text += "\n\nNegative tags that were used:\n" + final_negative
 	try:
 		resp = await client.chat.completions.create(
-			model=model, max_tokens=400,
+			model=model, max_tokens=500,
 			messages=[{"role": "user", "content": prompt_text}],
 		)
 		return (resp.choices[0].message.content or "").strip()
