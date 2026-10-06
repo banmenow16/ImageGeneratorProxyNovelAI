@@ -61,7 +61,7 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 	massager: PromptMassager = backend.massager
 
 	try:
-		rounds = max(1, min(int(body.get("rounds", 3)), 5))
+		rounds = max(1, min(int(body.get("rounds", 3)), 10))
 	except (TypeError, ValueError):
 		rounds = 3
 
@@ -82,9 +82,19 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 	character_dir = Path(request.app["videos_dir"]).parent / "advice" / name
 	character_dir.mkdir(parents=True, exist_ok=True)
 
-	current_prompt = prompt
-	current_negative = ""
-	critiques = []
+	current_prompt: str = prompt
+	current_negative: str = ""
+	critiques: list = []
+
+	if not current_prompt:
+		await emit({"event": "step", "phase": "deriving-prompt"})
+		current_prompt = await derive_starting_prompt(or_key, critique_model,
+			name, description)
+		if not current_prompt:
+			await emit({"event": "error", "error": "could not derive a starting prompt from her description"})
+			await response.write_eof()
+			return response
+		await emit({"event": "prompt", "prompt": current_prompt})
 
 	for round_no in range(rounds):
 		await emit({"event": "step", "phase": "generating", "round": round_no + 1,
@@ -162,6 +172,30 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		"satisfied": satisfied})
 	await response.write_eof()
 	return response
+
+
+async def derive_starting_prompt(api_key: str, model: str, name: str,
+		description: str) -> str:
+	"""Ask the critique model to turn her self-portrait into a starting
+	image prompt (identity + a simple standing pose, guide conventions)."""
+	from openai import AsyncOpenAI
+	client = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1",
+		timeout=60.0, max_retries=2)
+	instruction = (
+		f"Based on this self-description of {name}, write a single comma-separated "
+		f"tag list for generating an anime image of her. Identity tags only plus a "
+		f"simple standing pose and neutral setting — the system adds quality tags "
+		f"and negatives automatically. Output ONLY the tag list, nothing else.\n\n"
+		f"{description[:3000]}")
+	try:
+		resp = await client.chat.completions.create(
+			model=model, max_tokens=200,
+			messages=[{"role": "user", "content": instruction}])
+		result = (resp.choices[0].message.content or "").strip()
+		return result.strip("`").strip()
+	except Exception:
+		LOGGER.exception("starting prompt derivation failed for %s", name)
+		return ""
 
 
 def add_routes(app: web.Application) -> None:

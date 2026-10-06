@@ -31,11 +31,11 @@ button:disabled{opacity:.5;cursor:wait;animation:pulse 1.2s ease-in-out infinite
 	<form id="form">
 		<label>Character</label><input id="character" type="text" placeholder="Shiori">
 		<label>How she describes herself</label><textarea id="description" placeholder="First-person appearance description from your RP bot (see data/character_description_prompt.md)"></textarea>
-		<label>Starting prompt</label><textarea id="prompt" style="min-height:60px" placeholder="identity + scene tags per the image guide — quality tags and negatives are added automatically"></textarea>
+		<label>Starting prompt <span style="opacity:.5">(leave blank to let her derive one)</span></label><textarea id="prompt" style="min-height:60px" placeholder="blank = she writes her own starting prompt from her description"></textarea>
 		<label>Engine / rounds</label>
 		<div style="display:flex;gap:10px">
 			<select id="engine" style="flex:2"><option value="" disabled>loading…</option></select>
-			<select id="rounds-select" style="flex:1"><option>1</option><option selected>3</option><option>4</option><option>5</option></select>
+			<select id="rounds-select" style="flex:1"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select>
 		</div>
 		<label></label><button id="go">Start the mirror</button>
 	</form>
@@ -103,7 +103,8 @@ $("form").addEventListener("submit", async ev => {
 				const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
 				if (!line) continue;
 				const e = JSON.parse(line);
-				if (e.event === "step") { phase = e.phase; setStatus(`${e.phase} (round ${e.round || ""})…`); }
+				if (e.event === "step") { phase = e.phase; setStatus(`${e.phase} ${e.round ? "(round " + e.round + ")" : ""}…`); }
+				else if (e.event === "prompt") { $("prompt").value = e.prompt; setStatus("she wrote her starting prompt — generating round 1…"); }
 				else if (e.event === "image") {
 					addRound(e);
 					$( `round-${e.round}`).innerHTML = `<div class="rhead"><b style="color:var(--muted)">round ${e.round}</b></div><img src="${e.url}"><div class="mono" style="margin-top:6px">${e.prompt}</div>`;
