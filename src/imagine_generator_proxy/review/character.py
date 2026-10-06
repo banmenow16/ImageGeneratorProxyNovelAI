@@ -20,19 +20,36 @@ from imagine_generator_proxy.review.base import Reviewer, Verdict
 
 LOGGER = logging.getLogger(__name__)
 
+NOVELAI_PRIMER = """HOW YOUR ARTIST WORKS (NovelAI v4.5 — read before giving tag advice):
+- Only comma-separated tags (danbooru style), NOT prose. "massive breasts" works; "breasts that are very large" does not.
+- Earlier tags get MORE weight. Keep under ~30 tags total. Most important features first.
+- The system auto-adds quality boosters and generic negatives — never include them.
+- LATERALITY IS UNCONTROLLABLE: you cannot specify which eye, which hand, which side. Tag "one eye closed" not "left eye closed." Never flag a mismatch about which SIDE something is on.
+- Breast size: use ONE scale word (small/medium/large/huge/massive). Stacking synonyms ("massive heavy low-hanging breasts") does NOT make them bigger — it wastes tags.
+- Extreme proportions can cause torso distortion. If you want "massive," accept some stylization.
+- Asymmetry is achieved with "asymmetrical" tags, not by specifying left/right.
+- Backgrounds leak in unless you tag the setting explicitly (or "simple background").
+- Cannot render readable text, exact patterns, or precise jewelry details. Describe the vibe.
+- Hands are always somewhat simplified — normal for this art style, not worth fixing."""
+
 CRITIQUE_PROMPT = """You are {name} — her seeing copy, ported here so she
 can finally look at the drawings made of her. This is the self-portrait she
 handed over:
 "{description}"
 
-An artist just drew a portrait of you. Look at it the way you'd look in a
-mirror — be specific, be honest, and stay in your own voice.
+{primer}
+
+An artist just drew a portrait of you using this tag list:
+"{prompt}"
+
+Look at it the way you'd look in a mirror — be specific, be honest, stay in
+your own voice.
 
 Respond in EXACTLY this format, one section per line:
 LOOKS LIKE ME: <yes | almost | no>
 WHAT'S RIGHT: <comma-separated features that match you>
-WHAT'S WRONG: <comma-separated specific mismatches — hair, eyes, build, details>
-TAG FIXES: <comma-separated tag edits for the artist: plain tags to add, neg:tag to remove; max 6; skip laterality (which side something is on) — artists can't control sides>
+WHAT'S WRONG: <comma-separated specific mismatches — hair, eyes, build, details; skip laterality>
+REWRITTEN TAGS: <your COMPLETE rewritten tag list for the next attempt — incorporate what worked, fix what didn't, apply the primer's rules; this REPLACES the old list entirely>
 FEEL: <one sentence, in your voice, about seeing this picture of yourself>"""
 
 
@@ -71,9 +88,8 @@ class CharacterReviewer:
 
 
 def parse_critique(text: str) -> dict:
-	"""Parse the mirror-critique response into a dict with keys:
-	verdict ('yes'|'almost'|'no'), right, wrong, fixes (list), feel."""
-	result = {"verdict": "", "right": "", "wrong": "", "fixes": [], "feel": "", "raw": text}
+	"""Parse the mirror-critique response into a dict."""
+	result = {"verdict": "", "right": "", "wrong": "", "rewritten": "", "feel": "", "raw": text}
 	for line in (text or "").splitlines():
 		m = re.match(r"LOOKS LIKE ME:\s*(.+)", line, re.IGNORECASE)
 		if m:
@@ -84,9 +100,9 @@ def parse_critique(text: str) -> dict:
 		m = re.match(r"WHAT'S WRONG:\s*(.+)", line, re.IGNORECASE)
 		if m:
 			result["wrong"] = m.group(1).strip()
-		m = re.match(r"TAG FIXES:\s*(.+)", line, re.IGNORECASE)
+		m = re.match(r"REWRITTEN TAGS:\s*(.+)", line, re.IGNORECASE)
 		if m and m.group(1).strip().lower() not in ("none", "n/a", "-"):
-			result["fixes"] = [t.strip() for t in m.group(1).split(",") if t.strip()][:6]
+			result["rewritten"] = m.group(1).strip()
 		m = re.match(r"FEEL:\s*(.+)", line, re.IGNORECASE)
 		if m:
 			result["feel"] = m.group(1).strip()
@@ -94,10 +110,15 @@ def parse_critique(text: str) -> dict:
 
 
 async def character_critique(api_key: str, model: str, name: str,
-		description: str, image_bytes: bytes) -> Optional[dict]:
+		description: str, current_prompt: str, image_bytes: bytes) -> Optional[dict]:
 	"""The character looks at her portrait and critiques it. Returns the
 	parsed critique (see parse_critique) or None on failure."""
 	import base64
+	from imagine_generator_proxy.prompts.rules import DATA as _RULE_DATA
+	hints = _RULE_DATA.get("reviewer_hints") or []
+	hints_block = (" KNOWN ARTIST QUIRKS (learned from reviewing hundreds of "
+		"drawings — do not flag these as wrong):\n- " + "\n- ".join(hints)
+		if hints else "")
 	client = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1",
 		timeout=90.0, max_retries=2)
 	img_b64 = base64.b64encode(image_bytes).decode("ascii")
@@ -105,7 +126,10 @@ async def character_critique(api_key: str, model: str, name: str,
 		resp = await client.chat.completions.create(
 			model=model, max_tokens=400,
 			messages=[{"role": "user", "content": [
-				{"type": "text", "text": CRITIQUE_PROMPT.format(name=name, description=description[:4000])},
+				{"type": "text", "text": CRITIQUE_PROMPT.format(
+					name=name, description=description[:4000],
+					primer=NOVELAI_PRIMER + hints_block,
+					prompt=current_prompt[:2000])},
 				{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
 			]}],
 		)

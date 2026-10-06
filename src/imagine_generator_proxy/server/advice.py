@@ -135,7 +135,7 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 
 		await emit({"event": "step", "phase": "critiquing", "round": round_no + 1})
 		critique = await character_critique(or_key, critique_model, name,
-			description, bytes(image.data))
+			description, massaged.effective, bytes(image.data))
 		if critique is None:
 			await emit({"event": "error", "error": "critique failed"})
 			stopped_early = True
@@ -148,25 +148,14 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			await emit({"event": "step", "phase": "satisfied", "round": round_no + 1})
 			break
 
-		# apply her tag fixes to the prompt for the next round
-		add, negate = [], []
-		for fix in critique["fixes"]:
-			if fix.lower().startswith("neg:"):
-				negate.append(fix[4:].strip())
+		# she rewrites the entire tag block each round — no accumulation,
+		# no synonym stacking, the primer keeps her within NovelAI's rules
+		if critique.get("rewritten"):
+			rewritten = critique["rewritten"].strip()
+			if massager.check_safety(rewritten) is None:
+				current_prompt = _dedupe_tags(rewritten)
 			else:
-				add.append(fix)
-		add, negate = sanitize_fix_tags(add, negate, current_prompt)
-		add = [t for t in add if massager.check_safety(t) is None]
-		negate = [t for t in negate if massager.check_safety(t) is None]
-		if add:
-			current_prompt = current_prompt + ", " + ", ".join(add)
-		if negate:
-			current_negative = (current_negative + ", " + ", ".join(negate)).strip(", ")
-		# deduplicate: rounds accumulate near-synonymous tags (heavy breasts /
-		# low-hanging breasts / massive breasts...) that confuse the model and
-		# dilute later tags — collapse to first occurrence, preserving order
-		current_prompt = _dedupe_tags(current_prompt)
-		current_negative = _dedupe_tags(current_negative)
+				LOGGER.warning("Mirror: rewritten tags blocked by safety for %s", name)
 
 	# she writes her advice for the RP bot based on the rounds
 	await emit({"event": "step", "phase": "advising"})
