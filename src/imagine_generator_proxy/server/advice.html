@@ -35,7 +35,7 @@ button:disabled{opacity:.5;cursor:wait;animation:pulse 1.2s ease-in-out infinite
 		<label>Engine / rounds</label>
 		<div style="display:flex;gap:10px">
 			<select id="engine" style="flex:2"><option value="" disabled>loading…</option></select>
-			<select id="rounds" style="flex:1"><option>1</option><option selected>3</option><option>4</option><option>5</option></select>
+			<select id="rounds-select" style="flex:1"><option>1</option><option selected>3</option><option>4</option><option>5</option></select>
 		</div>
 		<label></label><button id="go">Start the mirror</button>
 	</form>
@@ -89,7 +89,7 @@ $("form").addEventListener("submit", async ev => {
 			headers: {"Content-Type": "application/json"},
 			body: JSON.stringify({character: $("character").value, description: $("description").value,
 				prompt: $("prompt").value, engine: $("engine").value,
-				rounds: parseInt($("rounds").value, 10)})});
+				rounds: parseInt($("rounds-select").value, 10)})});
 		if (!res.ok || !res.body) {
 			const err = await res.json().catch(() => ({}));
 			setStatus(`error ${res.status}: ${err.error || "request failed"}`, true);
