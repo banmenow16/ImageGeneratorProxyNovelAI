@@ -19,7 +19,7 @@ from aiohttp import web
 from imagine_generator_proxy.generation.base import ImageGenerator
 from imagine_generator_proxy.prompts import PromptMassager
 from imagine_generator_proxy.prompts.massager import sanitize_fix_tags
-from imagine_generator_proxy.review.character import character_critique
+from imagine_generator_proxy.review.character import character_advice, character_critique
 from imagine_generator_proxy.server.storage import Database
 
 LOGGER = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 
 	current_prompt = prompt
 	current_negative = ""
-	stopped_early = False
+	critiques = []
 
 	for round_no in range(rounds):
 		await emit({"event": "step", "phase": "generating", "round": round_no + 1,
@@ -115,6 +115,7 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			await emit({"event": "error", "error": "critique failed"})
 			stopped_early = True
 			break
+		critiques.append(critique)
 		await emit({"event": "critique", "round": round_no + 1, **critique})
 
 		if critique["verdict"] == "yes":
@@ -137,19 +138,28 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		if negate:
 			current_negative = (current_negative + ", " + ", ".join(negate)).strip(", ")
 
-	# save the evolved tag block as her canonical tags
+	# she writes her advice for the RP bot based on the rounds
+	await emit({"event": "step", "phase": "advising"})
+	rounds_summary = "; ".join(
+		f"round {i + 1}: {c.get('wrong', '') or 'nothing wrong'}"
+		for i, c in enumerate(critiques))
+	advice_text = await character_advice(or_key, critique_model, name,
+		description, rounds_summary)
+
+	# save the evolved tag block + advice
 	conn = database.connect()
 	try:
 		conn.execute("UPDATE characters SET canonical_tags = ?, advice = ?,"
 			" updated_at = CURRENT_TIMESTAMP WHERE name = ?",
-			(current_prompt, "", name))
+			(current_prompt, advice_text or "", name))
 		conn.commit()
 	finally:
 		conn.close()
 
-	satisfied = critique is not None and critique.get("verdict") == "yes"
+	satisfied = bool(critiques) and critiques[-1].get("verdict") == "yes"
 	await emit({"event": "done", "final_prompt": current_prompt,
-		"final_negative": current_negative, "satisfied": satisfied})
+		"final_negative": current_negative, "advice": advice_text or "",
+		"satisfied": satisfied})
 	await response.write_eof()
 	return response
 
