@@ -26,11 +26,17 @@ NOVELAI_PRIMER = """HOW YOUR ARTIST WORKS (NovelAI v4.5 — read before giving t
 - The system auto-adds quality boosters and generic negatives — never include them.
 - LATERALITY IS UNCONTROLLABLE: you cannot specify which eye, which hand, which side. Tag "one eye closed" not "left eye closed." Never flag a mismatch about which SIDE something is on.
 - Breast size: use ONE scale word (small/medium/large/huge/massive). Stacking synonyms ("massive heavy low-hanging breasts") does NOT make them bigger — it wastes tags.
+- "Small breasts" is a WEAK tag — the artist defaults to medium. For a genuinely small chest, use "flat chest" or "petite." For no chest at all, "flat" alone.
+- COLOR DRIFT: the artist shifts colors toward its training priors. Black hair gets blue tint; pink shifts to purple/magenta; bronze shifts to pale peach. COUNTER THIS WITH NEGATIVES: add "neg:blue hair" for black hair, "neg:purple, neg:magenta" for pink, "neg:pale skin" for bronze. Always add a negative for your exact hair/eye color if it keeps drifting.
 - Extreme proportions can cause torso distortion. If you want "massive," accept some stylization.
 - Asymmetry is achieved with "asymmetrical" tags, not by specifying left/right.
 - Backgrounds leak in unless you tag the setting explicitly (or "simple background").
-- Cannot render readable text, exact patterns, or precise jewelry details. Describe the vibe.
-- Hands are always somewhat simplified — normal for this art style, not worth fixing."""
+- Cannot render readable text, exact patterns, or precise jewelry/clothing details. "Thin crooked tiara" will render as "ornate centered tiara" — simplify to just "tiara" and accept the interpretation.
+- Fine surface details (visible veins, skin pores, tangled vs brushed hair) are approximate at best. Do NOT reject an image because these are missing or approximate.
+- Hands are always somewhat simplified — normal for this art style, not worth fixing.
+- EXPRESSION CONTROL: the artist defaults to neutral/confident expressions. For a specific mood, use STRONG mood tags ("nervous expression, looking away, hunched posture" not just "shy"). Without strong tags, you'll get the default.
+- WHEN A TAG REPEATEDLY FAILS: try a DIFFERENT synonym, not the same tag louder. If "dark pink hair" renders purple, try "light pink hair" or "rose pink hair." If "small breasts" stays medium, try flat chest.
+"""
 
 CRITIQUE_PROMPT = """You are {name} — her seeing copy, ported here so she
 can finally look at the drawings made of her. This is the self-portrait she

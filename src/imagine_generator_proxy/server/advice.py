@@ -220,6 +220,8 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			# retries exhausted without convergence
 			if stage_result["status"] not in ("converged", "skipped"):
 				stage_result["status"] = "unresolved"
+			elif stage_result["status"] == "pending":
+				stage_result["status"] = "unresolved"
 				last = all_critiques[-1] if all_critiques else {}
 				stage_result["notes"] = last.get("wrong", "did not converge")
 

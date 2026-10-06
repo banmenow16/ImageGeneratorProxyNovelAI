@@ -196,16 +196,17 @@ class AdviceDAO:
 		try:
 			query = """
 				SELECT ar.critique_wrong, COUNT(*) as count,
-					GROUP_CONCAT(DISTINCT ar.character) as characters
+					GROUP_CONCAT(DISTINCT aru.character) as characters
 				FROM advice_rounds ar
 				JOIN advice_stages ast ON ar.stage_db_id = ast.id
+				JOIN advice_runs aru ON ar.run_id = aru.id
 				WHERE ast.status = 'unresolved'
 					AND ar.critique_wrong IS NOT NULL
 					AND ar.critique_wrong != ''
 			"""
 			params = []
 			if character:
-				query += " AND ar.character = ?"
+				query += " AND aru.character = ?"
 				params.append(character)
 			query += " GROUP BY ar.critique_wrong ORDER BY count DESC LIMIT 30"
 			return conn.execute(query, params).fetchall()
