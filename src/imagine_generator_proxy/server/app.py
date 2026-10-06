@@ -37,6 +37,7 @@ from imagine_generator_proxy.generation import (  # noqa: F401
 )
 from imagine_generator_proxy.prompts import PromptMassager
 from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer, Reviewer
+from imagine_generator_proxy.controllers import advice_tools
 from imagine_generator_proxy.server import advice, buzz, experiment, gallery, video
 from imagine_generator_proxy.server.service import (
 	GenerationRequest,
@@ -353,6 +354,7 @@ def create_app() -> web.Application:
 	video.add_routes(app)
 	buzz.add_routes(app)
 	advice.add_routes(app)
+	advice_tools.add_routes(app)
 	experiment.add_routes(app)
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)
