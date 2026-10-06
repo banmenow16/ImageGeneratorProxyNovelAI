@@ -21,21 +21,47 @@ from imagine_generator_proxy.review.base import Reviewer, Verdict
 LOGGER = logging.getLogger(__name__)
 
 NOVELAI_PRIMER = """HOW YOUR ARTIST WORKS (NovelAI v4.5 — read before giving tag advice):
-- Only comma-separated tags (danbooru style), NOT prose. "massive breasts" works; "breasts that are very large" does not.
-- Earlier tags get MORE weight. Keep under ~30 tags total. Most important features first.
-- The system auto-adds quality boosters and generic negatives — never include them.
-- LATERALITY IS UNCONTROLLABLE: you cannot specify which eye, which hand, which side. Tag "one eye closed" not "left eye closed." Never flag a mismatch about which SIDE something is on.
-- Breast size: use ONE scale word (small/medium/large/huge/massive). Stacking synonyms ("massive heavy low-hanging breasts") does NOT make them bigger — it wastes tags.
-- "Small breasts" is a WEAK tag — the artist defaults to medium. For a genuinely small chest, use "flat chest" or "petite." For no chest at all, "flat" alone.
-- COLOR DRIFT: the artist shifts colors toward its training priors. Black hair gets blue tint; pink shifts to purple/magenta; bronze shifts to pale peach. COUNTER THIS WITH NEGATIVES: add "neg:blue hair" for black hair, "neg:purple, neg:magenta" for pink, "neg:pale skin" for bronze. Always add a negative for your exact hair/eye color if it keeps drifting.
-- Extreme proportions can cause torso distortion. If you want "massive," accept some stylization.
-- Asymmetry is achieved with "asymmetrical" tags, not by specifying left/right.
-- Backgrounds leak in unless you tag the setting explicitly (or "simple background").
-- Cannot render readable text, exact patterns, or precise jewelry/clothing details. "Thin crooked tiara" will render as "ornate centered tiara" — simplify to just "tiara" and accept the interpretation.
-- Fine surface details (visible veins, skin pores, tangled vs brushed hair) are approximate at best. Do NOT reject an image because these are missing or approximate.
-- Hands are always somewhat simplified — normal for this art style, not worth fixing.
-- EXPRESSION CONTROL: the artist defaults to neutral/confident expressions. For a specific mood, use STRONG mood tags ("nervous expression, looking away, hunched posture" not just "shy"). Without strong tags, you'll get the default.
-- WHEN A TAG REPEATEDLY FAILS: try a DIFFERENT synonym, not the same tag louder. If "dark pink hair" renders purple, try "light pink hair" or "rose pink hair." If "small breasts" stays medium, try flat chest.
+
+EMPHASIS SYNTAX (your strongest tool):
+- {tag} increases emphasis by ~1.05x per brace
+- {{tag}} doubles emphasis — use for features that keep getting ignored
+- Example: if flat chest keeps rendering as medium, write {{flat chest}}
+- Example: if black hair keeps getting blue tint, write {{black hair}}, matte hair
+
+TAG INTERACTIONS (colors bleed!):
+- Tags influence each other. A cyan mark on the arm can turn black hair blue.
+- Any blue-themed tag (cyan, teal, blue eyes, blue clothing) will bleed blue into hair.
+- Check your tag list for color conflicts. If your hair is black but you have a cyan feature, that cyan tag is CAUSING the blue tint.
+
+BREAST SIZE:
+- Small breasts is WEAK — the model defaults to medium. Use flat chest or petite.
+- For genuinely flat: {{flat chest}} with emphasis.
+- Stacking synonyms does NOT increase size — pick ONE word.
+
+COLOR DRIFT:
+- Black hair gets blue sheen: counter with {{black hair}}, matte hair, neg:blue hair
+- Pink shifts to purple: try rose pink or light pink instead of dark pink
+- Bronze/tan shifts pale: the model cannot do metallic skin — use tan skin
+- Silver accessories render gold: write {silver} with emphasis, or accept the gold
+
+REALISTIC EXPECTATIONS (do NOT reject over these):
+- Fine surface details (veins, pores, tangled vs brushed hair) are approximate
+- Accessory details (thin vs ornate, crooked vs straight) are beyond tag control
+- Hands are always somewhat simplified
+- Multiple figures appearing: add solo and remove tags that could imply others
+- Extreme body types (very tall, very petite) may compromise — accept the closest match
+- If a feature consistently fails after 3 attempts, ACCEPT it and note it as a limitation
+
+LATERALITY IS UNCONTROLLABLE:
+- You cannot specify which eye, which hand, which side. Tag one eye closed not left eye closed.
+- Never flag a mismatch about which SIDE something is on.
+
+OTHER RULES:
+- Only comma-separated tags, NOT prose
+- Earlier tags get more weight. Keep under ~30 tags total
+- The system auto-adds quality boosters and negatives — never include them
+- For a specific mood, use STRONG tags: nervous expression, looking away, hunched posture
+- When a tag fails, try a DIFFERENT synonym, not the same tag louder
 """
 
 CRITIQUE_PROMPT = """You are {name} — her seeing copy, ported here so she
