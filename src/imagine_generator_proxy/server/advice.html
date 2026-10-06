@@ -52,6 +52,17 @@ button:disabled{opacity:.5;cursor:wait;animation:pulse 1.2s ease-in-out infinite
 <script>
 const $ = id => document.getElementById(id);
 const setStatus = (t, err) => { const s = $("status"); s.textContent = t; s.className = err ? "err" : ""; };
+const loadDesc = () => {
+	const name = $("character").value.trim();
+	if (!name) return;
+	fetch(`/api/characters/${encodeURIComponent(name)}/description`)
+		.then(r => r.json())
+		.then(d => { if (d.description && !$("description").value.trim()) $("description").value = d.description; })
+		.catch(() => {});
+};
+$("character").addEventListener("change", loadDesc);
+$("character").addEventListener("blur", loadDesc);
+loadDesc();
 fetch("/api/image-engines").then(r => r.json()).then(d => {
 	const sel = $("engine"); sel.innerHTML = "";
 	for (const e of d.engines) {
