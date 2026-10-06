@@ -39,17 +39,21 @@ handed over:
 
 {primer}
 
-An artist just drew a portrait of you using this tag list:
-"{prompt}"
+You are currently viewing yourself in this composition: {stage_label}
+({stage_composition})
+
+An artist drew this view of you using these identity tags:
+"{identity_tags}"
 
 Look at it the way you'd look in a mirror — be specific, be honest, stay in
-your own voice.
+your own voice. Judge what you can SEE from this angle (don't flag things
+that aren't visible in this view).
 
 Respond in EXACTLY this format, one section per line:
 LOOKS LIKE ME: <yes | almost | no>
-WHAT'S RIGHT: <comma-separated features that match you>
-WHAT'S WRONG: <comma-separated specific mismatches — hair, eyes, build, details; skip laterality>
-REWRITTEN TAGS: <your COMPLETE rewritten tag list for the next attempt — incorporate what worked, fix what didn't, apply the primer's rules; this REPLACES the old list entirely>
+WHAT'S RIGHT: <comma-separated features visible in THIS view that match you>
+WHAT'S WRONG: <comma-separated specific mismatches visible in THIS view; skip laterality>
+REWRITTEN IDENTITY TAGS: <your COMPLETE rewritten IDENTITY-ONLY tag list — permanent features only (hair, eyes, skin, build, body features, distinguishing marks). NO pose, NO composition, NO setting, NO clothing unless permanent. This replaces the old identity list entirely.>
 FEEL: <one sentence, in your voice, about seeing this picture of yourself>"""
 
 
@@ -100,7 +104,7 @@ def parse_critique(text: str) -> dict:
 		m = re.match(r"WHAT'S WRONG:\s*(.+)", line, re.IGNORECASE)
 		if m:
 			result["wrong"] = m.group(1).strip()
-		m = re.match(r"REWRITTEN TAGS:\s*(.+)", line, re.IGNORECASE)
+		m = re.match(r"REWRITTEN IDENTITY TAGS:\s*(.+)", line, re.IGNORECASE)
 		if m and m.group(1).strip().lower() not in ("none", "n/a", "-"):
 			result["rewritten"] = m.group(1).strip()
 		m = re.match(r"FEEL:\s*(.+)", line, re.IGNORECASE)
@@ -110,7 +114,9 @@ def parse_critique(text: str) -> dict:
 
 
 async def character_critique(api_key: str, model: str, name: str,
-		description: str, current_prompt: str, image_bytes: bytes) -> Optional[dict]:
+		description: str, identity_tags: str, image_bytes: bytes,
+		stage_label: str = "Portrait",
+		stage_composition: str = "standing, front view") -> Optional[dict]:
 	"""The character looks at her portrait and critiques it. Returns the
 	parsed critique (see parse_critique) or None on failure."""
 	import base64
@@ -129,7 +135,9 @@ async def character_critique(api_key: str, model: str, name: str,
 				{"type": "text", "text": CRITIQUE_PROMPT.format(
 					name=name, description=description[:4000],
 					primer=NOVELAI_PRIMER + hints_block,
-					prompt=current_prompt[:2000])},
+					identity_tags=identity_tags[:2000],
+					stage_label=stage_label,
+					stage_composition=stage_composition)},
 				{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
 			]}],
 		)
@@ -139,40 +147,47 @@ async def character_critique(api_key: str, model: str, name: str,
 		LOGGER.exception("character critique failed for %s", name)
 		return None
 
-ADVICE_PROMPT = """You are {name}. You just looked at {rounds} portraits of yourself and
-critiqued each one. Now write the image-generation instructions that the RP
-bot will use every time it draws you, so you come out looking like yourself
-every single time.
+ADVICE_PROMPT = """You are {name}. You just went through a full wardrobe mirror — five views
+of yourself (portrait, from behind, topless, nude, nude from behind), critiquing
+each one. Now write the image-generation instructions that the RP bot will use
+every time it draws you.
 
-Your final tag list was: {tags}
+Your identity tags: {tags}
+
+Stage results from your wardrobe mirror:
+{stages}
 
 Write a complete instruction block in EXACTLY this format:
 
 IDENTITY TAGS (always include verbatim in every image prompt):
-<your complete tag list — the tags above, cleaned and finalized>
+<your complete identity tag list — permanent features only, no pose/composition>
 
 NEVER USE:
-<comma-separated tags/descriptions that always go wrong — from your rounds>
+<comma-separated tags that always produce wrong results — from what you saw>
+
+VIEW NOTES:
+<one line per view that had issues: which views are reliable, which are
+unreliable, and what to watch for>
 
 NOTES FOR THE ARTIST:
-<2-3 sentences in your own voice: what matters most, what keeps going wrong,
-what a good portrait of you should feel like>"""
+<2-3 sentences in your own voice: what matters most, what a good portrait
+of you should feel like>"""
 
 
 async def character_advice(api_key: str, model: str, name: str,
 		description: str, rounds_summary: str,
 		final_tags: str = "", final_negative: str = "") -> Optional[str]:
-	"""After the mirror rounds, she writes her drawing instructions for the RP bot."""
+	"""After the mirror stages, she writes her drawing instructions for the RP bot."""
 	client = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1",
 		timeout=90.0, max_retries=2)
 	prompt_text = (
-		ADVICE_PROMPT.format(name=name, rounds=rounds_summary,
-			tags=final_tags or "(none derived)")
+		ADVICE_PROMPT.format(name=name,
+			tags=final_tags or "(none derived)",
+			stages=rounds_summary)
 		+ "\n\nYour self-portrait:\n" + description[:3000]
-		+ "\n\nWhat you said about the rounds:\n" + rounds_summary[:2000]
 	)
 	if final_negative:
-		prompt_text += "\n\nNegative tags that were used:\n" + final_negative
+		prompt_text += "\n\nNegative tags used:\n" + final_negative
 	try:
 		resp = await client.chat.completions.create(
 			model=model, max_tokens=500,

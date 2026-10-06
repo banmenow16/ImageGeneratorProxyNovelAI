@@ -1,10 +1,10 @@
-"""Advice page (/advice): the character mirror loop.
+"""Advice page (/advice): the character mirror — staged wardrobe edition.
 
-Paste how she describes herself (from the RP bot via the mirror prompt),
-give a starting prompt, and the loop runs: generate a portrait -> she
-critiques it as herself -> her tag fixes are applied -> regenerate, until
-she says LOOKS LIKE ME: yes (or rounds run out). The final tag block is
-saved to the characters table as canonical_tags.
+Five composition probes (portrait, from behind, topless, nude, nude behind),
+each with up to N retries. Identity tags evolve across stages; composition
+tags are per-stage and never saved to the identity block. The final advice
+summarizes per-view reliability and produces a structured instruction block
+for the RP bot.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from aiohttp import web
 
 from imagine_generator_proxy.generation.base import ImageGenerator
 from imagine_generator_proxy.prompts import PromptMassager
-from imagine_generator_proxy.prompts.massager import sanitize_fix_tags
 from imagine_generator_proxy.review.character import character_advice, character_critique
 from imagine_generator_proxy.server.storage import Database
 
@@ -26,11 +25,25 @@ LOGGER = logging.getLogger(__name__)
 
 PAGE_PATH = Path(__file__).parent / "advice.html"
 
-CRITIQUE_MODEL_DEFAULT = "x-ai/grok-4.7"  # persona voice benefits from the strong model
+CRITIQUE_MODEL_DEFAULT = "x-ai/grok-4.7"
+
+STAGES = [
+	{"id": "portrait", "label": "Portrait",
+		"composition": "standing, front view, full body, looking at viewer, simple background"},
+	{"id": "from_behind", "label": "From Behind",
+		"composition": "from behind, back view, standing, looking away"},
+	{"id": "topless", "label": "Topless",
+		"composition": "topless, upper body, front view"},
+	{"id": "nude", "label": "Nude (front)",
+		"composition": "nude, full body, front view"},
+	{"id": "nude_behind", "label": "Nude from Behind",
+		"composition": "nude, from behind, back view, full body"},
+]
+
+MAX_RETRIES = 5  # per stage
 
 
 def _dedupe_tags(tag_string: str) -> str:
-	"""Collapse duplicate tags (case-insensitive), keeping first occurrence."""
 	seen = set()
 	out = []
 	for tag in tag_string.split(","):
@@ -42,6 +55,18 @@ def _dedupe_tags(tag_string: str) -> str:
 			seen.add(key)
 			out.append(tag)
 	return ", ".join(out)
+
+
+def _strip_composition(tags: str) -> str:
+	"""Remove known composition tags from an identity string (the critique
+	model sometimes includes them despite instructions)."""
+	composition_tags = {
+		"standing", "front view", "full body", "looking at viewer",
+		"simple background", "from behind", "back view", "looking away",
+		"upper body", "nude", "topless", "solo", "1girl",
+	}
+	return ", ".join(t.strip() for t in tags.split(",")
+		if t.strip() and t.strip().lower() not in composition_tags)
 
 
 async def advice_page_handler(request: web.Request) -> web.Response:
@@ -75,11 +100,6 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 	generator: ImageGenerator = backend.generator
 	massager: PromptMassager = backend.massager
 
-	try:
-		rounds = max(1, min(int(body.get("rounds", 3)), 10))
-	except (TypeError, ValueError):
-		rounds = 3
-
 	or_key = (request.app.get("config") or {}).get("openRouterToken")
 	if not or_key:
 		return web.json_response({"error": "no openRouterToken — critique needs the vision model"}, status=400)
@@ -97,105 +117,145 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 	character_dir = Path(request.app["videos_dir"]).parent / "advice" / name
 	character_dir.mkdir(parents=True, exist_ok=True)
 
-	current_prompt: str = prompt
-	current_negative: str = ""
-	critiques: list = []
-
-	if not current_prompt:
+	# --- derive identity tags if no starting prompt ---
+	identity_tags: str = prompt
+	if not identity_tags:
 		await emit({"event": "step", "phase": "deriving-prompt"})
-		current_prompt = await derive_starting_prompt(or_key, critique_model,
-			name, description)
-		if not current_prompt:
-			await emit({"event": "error", "error": "could not derive a starting prompt from her description"})
+		identity_tags = await derive_identity_tags(or_key, critique_model, name, description)
+		if not identity_tags:
+			await emit({"event": "error", "error": "could not derive identity tags"})
 			await response.write_eof()
 			return response
-		await emit({"event": "prompt", "prompt": current_prompt})
+		await emit({"event": "prompt", "prompt": identity_tags})
 
-	for round_no in range(rounds):
-		await emit({"event": "step", "phase": "generating", "round": round_no + 1,
-			"prompt": current_prompt})
-		massaged = massager.massage(current_prompt, name)
-		if massaged.blocked_reason is not None:
-			await emit({"event": "error", "error": f"prompt blocked: {massaged.blocked_reason}"})
-			stopped_early = True
-			break
-		negative = ", ".join([current_negative, massaged.negative_additions and
-			", ".join(massaged.negative_additions) or ""]).strip(", ")
-		image = await generator.generate(massaged.effective, negative,
-			prompt_is_complete=True)
-		if image is None:
-			await emit({"event": "error", "error": "generation failed"})
-			stopped_early = True
-			break
-		img_path = character_dir / f"round{round_no + 1}.png"
-		img_path.write_bytes(bytes(image.data))
-		url = f"/advice-files/{name}/round{round_no + 1}.png"
-		await emit({"event": "image", "round": round_no + 1, "url": url,
-			"prompt": massaged.effective})
+	identity_tags = _strip_composition(_dedupe_tags(identity_tags))
+	current_negative: str = ""
+	stage_results: list = []
+	all_critiques: list = []
+	image_counter = 0
 
-		await emit({"event": "step", "phase": "critiquing", "round": round_no + 1})
-		critique = await character_critique(or_key, critique_model, name,
-			description, massaged.effective, bytes(image.data))
-		if critique is None:
-			await emit({"event": "error", "error": "critique failed"})
-			stopped_early = True
-			break
-		critiques.append(critique)
-		await emit({"event": "critique", "round": round_no + 1, **critique})
+	# --- staged probes ---
+	for stage in STAGES:
+		stage_id = stage["id"]
+		stage_label = stage["label"]
+		stage_composition = stage["composition"]
+		stage_result = {"id": stage_id, "label": stage_label, "status": "skipped",
+			"attempts": 0, "notes": ""}
+		await emit({"event": "stage", "phase": "start", "stage": stage_id,
+			"label": stage_label})
 
-		if critique["verdict"] == "yes":
-			stopped_early = True  # she's satisfied — stop the loop below after save
-			await emit({"event": "step", "phase": "satisfied", "round": round_no + 1})
-			break
+		for retry in range(MAX_RETRIES):
+			stage_result["attempts"] = retry + 1
+			# combine identity + this stage's composition
+			full_prompt = f"{identity_tags}, {stage_composition}"
+			image_counter += 1
 
-		# she rewrites the entire tag block each round — no accumulation,
-		# no synonym stacking, the primer keeps her within NovelAI's rules
-		if critique.get("rewritten"):
-			rewritten = critique["rewritten"].strip()
-			if massager.check_safety(rewritten) is None:
-				current_prompt = _dedupe_tags(rewritten)
-			else:
-				LOGGER.warning("Mirror: rewritten tags blocked by safety for %s", name)
+			await emit({"event": "step", "phase": "generating", "stage": stage_id,
+				"retry": retry + 1, "prompt": full_prompt})
+			massaged = massager.massage(full_prompt, name)
+			if massaged.blocked_reason is not None:
+				stage_result["notes"] = f"safety block: {massaged.blocked_reason}"
+				await emit({"event": "step", "phase": "skipped", "stage": stage_id})
+				break
 
-	# she writes her advice for the RP bot based on the rounds
+			negative = ", ".join(filter(None, [current_negative,
+				", ".join(massaged.negative_additions) if massaged.negative_additions else ""]))
+			image = await generator.generate(massaged.effective, negative, prompt_is_complete=True)
+			if image is None:
+				stage_result["notes"] = "generation failed"
+				await emit({"event": "step", "phase": "skipped", "stage": stage_id})
+				break
+
+			img_path = character_dir / f"{stage_id}_r{retry + 1}.png"
+			img_path.write_bytes(bytes(image.data))
+			url = f"/advice-files/{name}/{stage_id}_r{retry + 1}.png"
+			await emit({"event": "image", "stage": stage_id, "retry": retry + 1,
+				"url": url, "prompt": massaged.effective})
+
+			await emit({"event": "step", "phase": "critiquing", "stage": stage_id,
+				"retry": retry + 1})
+			critique = await character_critique(or_key, critique_model, name,
+				description, identity_tags, bytes(image.data),
+				stage_label=stage_label, stage_composition=stage_composition)
+			if critique is None:
+				stage_result["notes"] = "critique failed"
+				await emit({"event": "step", "phase": "skipped", "stage": stage_id})
+				break
+
+			all_critiques.append(critique)
+			await emit({"event": "critique", "stage": stage_id, "retry": retry + 1,
+				**critique})
+
+			if critique["verdict"] == "yes":
+				stage_result["status"] = "converged"
+				stage_result["notes"] = critique.get("right", "")
+				await emit({"event": "step", "phase": "converged", "stage": stage_id})
+				break
+
+			# she rewrites the identity tags (composition stays separate)
+			if critique.get("rewritten"):
+				rewritten = _strip_composition(critique["rewritten"].strip())
+				if massager.check_safety(rewritten) is None:
+					identity_tags = _dedupe_tags(rewritten)
+
+			if retry < MAX_RETRIES - 1:
+				await emit({"event": "step", "phase": "retrying", "stage": stage_id,
+					"retry": retry + 1})
+		else:
+			# retries exhausted without convergence
+			if stage_result["status"] not in ("converged", "skipped"):
+				stage_result["status"] = "unresolved"
+				last = all_critiques[-1] if all_critiques else {}
+				stage_result["notes"] = last.get("wrong", "did not converge")
+
+		stage_results.append(stage_result)
+		await emit({"event": "stage", "phase": "done", "stage": stage_id,
+			"status": stage_result["status"], "attempts": stage_result["attempts"]})
+
+	# --- final advice ---
 	await emit({"event": "step", "phase": "advising"})
 	rounds_summary = "; ".join(
-		f"round {i + 1}: {c.get('wrong', '') or 'nothing wrong'}"
-		for i, c in enumerate(critiques))
+		f"{s['label']}: {s['status']}"
+		+ (f" ({s['notes'][:120]})" if s["notes"] else "")
+		for s in stage_results)
 	advice_text = await character_advice(or_key, critique_model, name,
-		description, rounds_summary, final_tags=current_prompt,
+		description, rounds_summary, final_tags=identity_tags,
 		final_negative=current_negative)
 
-	# save the evolved tag block + advice
+	# save
 	conn = database.connect()
 	try:
 		conn.execute("UPDATE characters SET canonical_tags = ?, advice = ?,"
 			" updated_at = CURRENT_TIMESTAMP WHERE name = ?",
-			(current_prompt, advice_text or "", name))
+			(identity_tags, advice_text or "", name))
 		conn.commit()
 	finally:
 		conn.close()
 
-	satisfied = bool(critiques) and critiques[-1].get("verdict") == "yes"
-	await emit({"event": "done", "final_prompt": current_prompt,
+	converged_count = sum(1 for s in stage_results if s["status"] == "converged")
+	await emit({"event": "done", "final_prompt": identity_tags,
 		"final_negative": current_negative, "advice": advice_text or "",
-		"satisfied": satisfied})
+		"stage_results": stage_results,
+		"satisfied": converged_count == len(STAGES),
+		"converged_count": converged_count, "total_stages": len(STAGES)})
 	await response.write_eof()
 	return response
 
 
-async def derive_starting_prompt(api_key: str, model: str, name: str,
+async def derive_identity_tags(api_key: str, model: str, name: str,
 		description: str) -> str:
-	"""Ask the critique model to turn her self-portrait into a starting
-	image prompt (identity + a simple standing pose, guide conventions)."""
+	"""Ask the critique model to produce identity-only tags from her portrait."""
 	from openai import AsyncOpenAI
 	client = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1",
 		timeout=60.0, max_retries=2)
 	instruction = (
-		f"Based on this self-description of {name}, write a single comma-separated "
-		f"tag list for generating an anime image of her. Identity tags only plus a "
-		f"simple standing pose and neutral setting — the system adds quality tags "
-		f"and negatives automatically. Output ONLY the tag list, nothing else.\n\n"
+		f"Based on this self-description of {name}, write a comma-separated "
+		f"IDENTITY tag list for generating anime images of her. IDENTITY ONLY — "
+		f"her permanent physical features (hair color/length, eye color, skin, "
+		f"build, breast size, body features like wings/horns/tail/scales, "
+		f"distinguishing marks). NO pose tags, NO composition tags, NO setting "
+		f"tags, NO clothing (unless it's permanently part of her look). "
+		f"Keep under 20 tags. Output ONLY the tag list.\n\n"
 		f"{description[:3000]}")
 	try:
 		resp = await client.chat.completions.create(
@@ -204,7 +264,7 @@ async def derive_starting_prompt(api_key: str, model: str, name: str,
 		result = (resp.choices[0].message.content or "").strip()
 		return result.strip("`").strip()
 	except Exception:
-		LOGGER.exception("starting prompt derivation failed for %s", name)
+		LOGGER.exception("identity tag derivation failed for %s", name)
 		return ""
 
 
