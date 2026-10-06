@@ -124,7 +124,21 @@ $("form").addEventListener("submit", async ev => {
 				}
 			}
 		}
-	} catch (e) { setStatus("failed: " + e, true); }
+	} catch (e) {
+		setStatus("stream error: " + e.message + " — if rounds appeared above, the data is safe on disk; check her sheet", true);
+		// still show the final panel if we have any rounds rendered
+		if (document.querySelectorAll(".round").length > 0 && !$("final").style.display) {
+			fetch(`/api/characters/${encodeURIComponent($("character").value.trim())}/sheet`)
+				.then(r => r.json())
+				.then(d => {
+					if (d.canonical_tags || d.advice) {
+						$("final").style.display = "";
+						$("finalblock").textContent = d.canonical_tags || "(none)";
+						$("adviceblock").textContent = d.advice || "(none)";
+					}
+				}).catch(() => {});
+		}
+	}
 	finally { clearInterval(timer); $("go").disabled = false; }
 });
 </script></body></html>
