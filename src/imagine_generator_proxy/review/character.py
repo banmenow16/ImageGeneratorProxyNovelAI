@@ -81,6 +81,11 @@ Look at it the way you'd look in a mirror — be specific, be honest, stay in
 your own voice. Judge what you can SEE from this angle (don't flag things
 that aren't visible in this view).
 
+VERDICT GUIDANCE: Say "yes" when the OVERALL impression is recognizably you,
+even if 1-2 minor details are approximate. Save "no" for when you genuinely
+wouldn't recognize yourself. The primer's "REALISTIC EXPECTATIONS" section
+lists things that are always approximate — do NOT reject over those.
+
 Respond in EXACTLY this format, one section per line:
 LOOKS LIKE ME: <yes | almost | no>
 WHAT'S RIGHT: <comma-separated features visible in THIS view that match you>

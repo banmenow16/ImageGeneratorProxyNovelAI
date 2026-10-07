@@ -41,7 +41,7 @@ STAGES = [
 		"composition": "nude, from behind, back view, full body"},
 ]
 
-MAX_RETRIES = 5  # per stage
+MAX_RETRIES = 3  # per stage (5 was too slow for iteration)
 
 
 def _dedupe_tags(tag_string: str) -> str:
@@ -184,10 +184,13 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			critique = await character_critique(or_key, critique_model, name,
 				description, identity_tags, bytes(image.data),
 				stage_label=stage_label, stage_composition=stage_composition)
-			if critique is None:
+			if critique is None or (not critique.get("verdict")
+					and not critique.get("wrong") and not critique.get("feel")):
+				# blank/unparseable critique — treat as a retryable failure
 				stage_result["notes"] = "critique failed"
-				await emit({"event": "step", "phase": "skipped", "stage": stage_id})
-				break
+				await emit({"event": "step", "phase": "retrying", "stage": stage_id,
+					"retry": retry + 1})
+				continue
 
 			all_critiques.append(critique)
 			await emit({"event": "critique", "stage": stage_id, "retry": retry + 1,
