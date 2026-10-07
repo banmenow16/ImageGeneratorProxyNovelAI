@@ -189,10 +189,20 @@ Your identity tags: {tags}
 Stage results from your wardrobe mirror:
 {stages}
 
+IMPORTANT — use emphasis syntax in your identity tags for features that
+kept getting ignored or rendered wrong during your mirror sessions:
+- {{tag}} doubles emphasis: write {{flat chest}} if flat chest kept failing
+- {tag} adds ~1.05x emphasis: write {silver tiara} if silver kept going gold
+- Only emphasize tags that ACTUALLY failed — don't brace everything
+- Include matte hair if your black hair kept getting blue/teal tint
+- If a blue-themed tag (cyan mark, teal clothing) kept bleeding blue into
+  your hair, mention this in NOTES so the RP bot knows to watch for it
+
 Write a complete instruction block in EXACTLY this format:
 
 IDENTITY TAGS (always include verbatim in every image prompt):
-<your complete identity tag list — permanent features only, no pose/composition>
+<your complete identity tag list — permanent features only, use emphasis
+syntax {{}} on tags that failed during your mirror, no pose/composition>
 
 NEVER USE:
 <comma-separated tags that always produce wrong results — from what you saw>
@@ -203,7 +213,7 @@ unreliable, and what to watch for>
 
 NOTES FOR THE ARTIST:
 <2-3 sentences in your own voice: what matters most, what a good portrait
-of you should feel like>"""
+of you should feel like, any tag interactions the bot should know about>"""
 
 
 async def character_advice(api_key: str, model: str, name: str,

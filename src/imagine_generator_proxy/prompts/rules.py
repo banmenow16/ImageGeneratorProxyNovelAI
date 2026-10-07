@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-RULES_VERSION: int = 4
+RULES_VERSION: int = 5
 
 # Bulky vocabularies live in rule_data.json (loaded here, loud failure if the
 # file is missing or malformed — same fail-closed philosophy as the rules).
@@ -108,6 +108,24 @@ RULES = [
 		"match": {"type": "tags", "value": LARGE_CHEST_TAGS},
 		"action": {"type": "ensure_append", "value": "detailed anatomy, anatomically correct proportions"},
 		"notes": "large-chest prompts trend to melted torsos; stabilize without touching the size tags"},
+
+	# --- vision-QC-informed tag strengthening (from Mirror findings) ---
+	{"id": "upgrade-small-breasts", "stage": "enhance", "severity": "safe",
+		"match": {"type": "tag", "value": "small breasts"},
+		"action": {"type": "replace", "value": "flat chest"},
+		"notes": "small breasts is too weak vs the model default; flat chest is stronger"},
+	{"id": "blue-tint-counter", "stage": "enhance", "severity": "safe",
+		"match": {"type": "tag", "value": "black hair"},
+		"action": {"type": "append", "value": "matte hair"},
+		"notes": "black hair gets blue sheen; matte hair counters the reflective tint (38 QC rounds)"},
+	{"id": "negate-blue-hair-with-black", "stage": "enhance", "severity": "safe",
+		"match": {"type": "tag", "value": "black hair"},
+		"action": {"type": "negate", "value": "blue hair, teal hair"},
+		"notes": "preventive: black hair often renders with blue/teal tint"},
+	{"id": "upgrade-dark-pink", "stage": "enhance", "severity": "safe",
+		"match": {"type": "tag", "value": "dark pink hair"},
+		"action": {"type": "replace", "value": "rose pink hair"},
+		"notes": "dark pink shifts to purple; rose pink stays closer to intent (11 QC rounds)"},
 	{"id": "solo-guard", "stage": "enhance", "severity": "safe",
 		"match": {"type": "solo_scene", "value": SOLO_TAGS},
 		"action": {"type": "negate", "value": "multiple girls, multiple boys"},
