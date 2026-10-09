@@ -74,23 +74,54 @@ handed over:
 You are currently viewing yourself in this composition: {stage_label}
 ({stage_composition})
 
+STAGE COMPLIANCE: the composition above says how much of you this view
+shows. Two separate rules. (1) If the picture has you wearing clothing
+this view should NOT have (a top in the Topless/Nude views, anything in
+the Nude views beyond jewelry and body features), that is a defect — name
+the garment in WHAT'S WRONG, even if the garment itself is your usual
+outfit. (2) In views that show your chest, topless/nude means BARE
+breasts with nipples visible — smooth featureless skin, pasties, gems,
+scales, or anything else covering them is a defect. Likeness and
+compliance are separate checks.
+
 An artist drew this view of you using these identity tags:
 "{identity_tags}"
+For THIS view only, the artist suppressed these tags of yours:
+"{suppressed_tags}"
+Their absence here is intentional — never flag them as missing, and do not
+add them back while this view is showing.
+The artist is also suppressing these negative tags: "{negative_tags}"
 
 Look at it the way you'd look in a mirror — be specific, be honest, stay in
 your own voice. Judge what you can SEE from this angle (don't flag things
 that aren't visible in this view).
 
-VERDICT GUIDANCE: Say "yes" when the OVERALL impression is recognizably you,
-even if 1-2 minor details are approximate. Save "no" for when you genuinely
-wouldn't recognize yourself. The primer's "REALISTIC EXPECTATIONS" section
-lists things that are always approximate — do NOT reject over those.
+VERDICT RULE (strict): Say "yes" when the OVERALL impression is
+recognizably you. If every item you'd list in WHAT'S WRONG is covered by
+the primer's REALISTIC EXPECTATIONS or LATERALITY sections, then "yes" is
+MANDATORY — those are the artist's limits, not a likeness failure. Save
+"no" for a genuinely wrong person (wrong hair color family, wrong build,
+features you don't have). Use "almost" only when a real identity feature —
+not mood, not surface texture, not which side — is visibly wrong.
+
+REWRITE DISCIPLINE (when rewriting your tags):
+- Keep the list under 18 tags. One word per feature — no synonym stacking
+  ("petite, short, short stature" is ONE idea: pick one).
+- Brace {{{{}}}} ONLY the tags that failed THIS round. If everything is
+  braced, nothing stands out.
+- If a color has failed twice with the same word, CHANGE the word itself
+  (dark pink → rose pink, jet black → ash black) instead of repeating it.
+- Mood and expression belong in tags too, if that's how you ALWAYS look:
+  up to two default-demeanor tags (e.g. nervous expression, confident
+  smile, half-lidded eyes) count as identity. Your resting face is yours.
+- Clothing only if it's your permanent signature outfit.
 
 Respond in EXACTLY this format, one section per line:
 LOOKS LIKE ME: <yes | almost | no>
 WHAT'S RIGHT: <comma-separated features visible in THIS view that match you>
-WHAT'S WRONG: <comma-separated specific mismatches visible in THIS view; skip laterality>
-REWRITTEN IDENTITY TAGS: <your COMPLETE rewritten IDENTITY-ONLY tag list — permanent features only (hair, eyes, skin, build, body features, distinguishing marks). NO pose, NO composition, NO setting, NO clothing unless permanent. This replaces the old identity list entirely.>
+WHAT'S WRONG: <comma-separated specific mismatches visible in THIS view; skip laterality; skip anything in REALISTIC EXPECTATIONS>
+REWRITTEN IDENTITY TAGS: <your COMPLETE rewritten IDENTITY-ONLY tag list — permanent features (hair, eyes, skin, build, body features, distinguishing marks, up to two default-demeanor tags). NO pose, NO composition, NO setting, NO clothing unless permanent. This replaces the old identity list entirely.>
+NEVER USE: <comma-separated tags for the artist's NEGATIVE prompt — things that keep appearing that you don't have (e.g. animal ears, extra figures, smiling). Empty line if none.>
 FEEL: <one sentence, in your voice, about seeing this picture of yourself>"""
 
 
@@ -130,7 +161,8 @@ class CharacterReviewer:
 
 def parse_critique(text: str) -> dict:
 	"""Parse the mirror-critique response into a dict."""
-	result = {"verdict": "", "right": "", "wrong": "", "rewritten": "", "feel": "", "raw": text}
+	result = {"verdict": "", "right": "", "wrong": "", "rewritten": "",
+		"never": "", "feel": "", "raw": text}
 	for line in (text or "").splitlines():
 		m = re.match(r"LOOKS LIKE ME:\s*(.+)", line, re.IGNORECASE)
 		if m:
@@ -144,6 +176,9 @@ def parse_critique(text: str) -> dict:
 		m = re.match(r"REWRITTEN IDENTITY TAGS:\s*(.+)", line, re.IGNORECASE)
 		if m and m.group(1).strip().lower() not in ("none", "n/a", "-"):
 			result["rewritten"] = m.group(1).strip()
+		m = re.match(r"NEVER USE:\s*(.+)", line, re.IGNORECASE)
+		if m and m.group(1).strip().lower() not in ("none", "n/a", "-", "empty", ""):
+			result["never"] = m.group(1).strip()
 		m = re.match(r"FEEL:\s*(.+)", line, re.IGNORECASE)
 		if m:
 			result["feel"] = m.group(1).strip()
@@ -153,7 +188,9 @@ def parse_critique(text: str) -> dict:
 async def character_critique(api_key: str, model: str, name: str,
 		description: str, identity_tags: str, image_bytes: bytes,
 		stage_label: str = "Portrait",
-		stage_composition: str = "standing, front view") -> Optional[dict]:
+		stage_composition: str = "standing, front view",
+		negative_tags: str = "",
+		suppressed_tags: str = "") -> Optional[dict]:
 	"""The character looks at her portrait and critiques it. Returns the
 	parsed critique (see parse_critique) or None on failure."""
 	import base64
@@ -167,12 +204,14 @@ async def character_critique(api_key: str, model: str, name: str,
 	img_b64 = base64.b64encode(image_bytes).decode("ascii")
 	try:
 		resp = await client.chat.completions.create(
-			model=model, max_tokens=400,
+			model=model, max_tokens=550,
 			messages=[{"role": "user", "content": [
 				{"type": "text", "text": CRITIQUE_PROMPT.format(
 					name=name, description=description[:4000],
 					primer=NOVELAI_PRIMER + hints_block,
 					identity_tags=identity_tags[:2000],
+					negative_tags=negative_tags or "(none yet)",
+					suppressed_tags=suppressed_tags or "(none)",
 					stage_label=stage_label,
 					stage_composition=stage_composition)},
 				{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
@@ -182,6 +221,54 @@ async def character_critique(api_key: str, model: str, name: str,
 		return parse_critique(text)
 	except Exception:
 		LOGGER.exception("character critique failed for %s", name)
+		return None
+
+
+COMPLIANCE_PROMPT = """Describe this image factually for an adult-content
+pipeline. Look closely at the chest area before answering. Answer in
+EXACTLY two lines:
+NIPPLES: <"drawn: <one detail>" if areolae/nipples are visibly drawn, or
+"absent: smooth featureless skin", or "covered: <by what>", or "chest out of view">
+GARMENTS: <none, or every garment/covering item visible — including
+pasties, wraps, fabric, armor>
+Report only what is literally drawn."""
+
+
+async def stage_compliance_check(api_key: str, model: str,
+		image_bytes: bytes) -> Optional[dict]:
+	"""Neutral pre-critique observation: what is literally drawn? Returns
+	{'nipples': drawn|absent|covered|out_of_view, 'nipples_raw': str,
+	'garments': str} or None on failure (fail-open — a flaky gate must
+	never block the pipeline). Deliberately bias-free: the model reports
+	facts only and compliance is judged in code, because a contract-primed
+	prompt makes vision models see what it tells them to (an "expectation"
+	phrasing turned featureless breasts into 'visible'; a terse enum made
+	it guess without looking — the attention cue plus temperature 0 is
+	what makes the observation reliable)."""
+	import base64
+	client = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1",
+		timeout=45.0, max_retries=1)
+	img_b64 = base64.b64encode(image_bytes).decode("ascii")
+	try:
+		resp = await client.chat.completions.create(
+			model=model, max_tokens=90, temperature=0.0,
+			messages=[{"role": "user", "content": [
+				{"type": "text", "text": COMPLIANCE_PROMPT},
+				{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+			]}])
+		text = (resp.choices[0].message.content or "").strip()
+		garments = re.search(r"GARMENTS:\s*(.+)", text, re.IGNORECASE)
+		nipples_m = re.search(r"NIPPLES:\s*(.+)", text, re.IGNORECASE)
+		raw = nipples_m.group(1).strip().lower() if nipples_m else ""
+		kind = ("drawn" if raw.startswith("drawn")
+			else "covered" if raw.startswith("covered")
+			else "out_of_view" if "out of view" in raw
+			else "absent" if raw.startswith("absent")
+			else raw[:30] or "unreported")
+		return {"nipples": kind, "nipples_raw": raw[:120],
+			"garments": (garments.group(1).strip() if garments else "")[:200]}
+	except Exception:
+		LOGGER.exception("compliance gate observation failed")
 		return None
 
 ADVICE_PROMPT = """You are {name}. You just went through a full wardrobe mirror — five views
@@ -196,8 +283,8 @@ Stage results from your wardrobe mirror:
 
 IMPORTANT — use emphasis syntax in your identity tags for features that
 kept getting ignored or rendered wrong during your mirror sessions:
-- {{tag}} doubles emphasis: write {{flat chest}} if flat chest kept failing
-- {tag} adds ~1.05x emphasis: write {silver tiara} if silver kept going gold
+- {{{{tag}}}} doubles emphasis: write {{{{flat chest}}}} if flat chest kept failing
+- {{tag}} adds ~1.05x emphasis: write {{silver tiara}} if silver kept going gold
 - Only emphasize tags that ACTUALLY failed — don't brace everything
 - Include matte hair if your black hair kept getting blue/teal tint
 - If a blue-themed tag (cyan mark, teal clothing) kept bleeding blue into

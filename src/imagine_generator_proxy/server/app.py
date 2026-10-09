@@ -15,7 +15,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
-from imagine_generator_proxy.generation.base import ImageGenerator
+from imagine_generator_proxy.generation.base import Backend, ImageGenerator
 from imagine_generator_proxy.prompts.massager import PromptMassager
 
 from aiohttp import ClientSession, web
@@ -37,7 +37,7 @@ from imagine_generator_proxy.generation import (  # noqa: F401
 )
 from imagine_generator_proxy.prompts import PromptMassager
 from imagine_generator_proxy.review import NoopReviewer, OpenRouterReviewer, Reviewer
-from imagine_generator_proxy.controllers import advice_tools
+from imagine_generator_proxy.controllers import register_controllers
 from imagine_generator_proxy.server import advice, buzz, experiment, gallery, video
 from imagine_generator_proxy.server.service import (
 	GenerationRequest,
@@ -325,14 +325,9 @@ async def on_startup(app: web.Application) -> None:
 		except Exception:
 			LOGGER.exception("Failed to login with email/password")
 
-
-@dataclass
-class Backend:
-	"""A selectable generation backend: generator + its ruleset-matched massager."""
-	name: str
-	display: str
-	generator: ImageGenerator
-	massager: PromptMassager
+	# controllers take constructor-injected app state, so they register
+	# here (after the state exists) rather than in create_app
+	register_controllers(app)
 
 
 async def on_cleanup(app: web.Application) -> None:
@@ -354,7 +349,6 @@ def create_app() -> web.Application:
 	video.add_routes(app)
 	buzz.add_routes(app)
 	advice.add_routes(app)
-	advice_tools.add_routes(app)
 	experiment.add_routes(app)
 	app.on_startup.append(on_startup)
 	app.on_cleanup.append(on_cleanup)

@@ -10,6 +10,7 @@ for the RP bot.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import logging
 from pathlib import Path
@@ -19,7 +20,11 @@ from aiohttp import web
 
 from imagine_generator_proxy.generation.base import ImageGenerator
 from imagine_generator_proxy.prompts import PromptMassager
-from imagine_generator_proxy.review.character import character_advice, character_critique
+from imagine_generator_proxy.review.character import (
+	character_advice,
+	character_critique,
+	stage_compliance_check,
+)
 from imagine_generator_proxy.server.storage import Database
 
 LOGGER = logging.getLogger(__name__)
@@ -27,21 +32,35 @@ LOGGER = logging.getLogger(__name__)
 PAGE_PATH = Path(__file__).parent / "advice.html"
 
 CRITIQUE_MODEL_DEFAULT = "x-ai/grok-4.7"
+COMPLIANCE_MODEL_DEFAULT = "qwen/qwen3-vl-32b-instruct"
 
 STAGES = [
-	{"id": "portrait", "label": "Portrait",
+	{"id": "portrait", "label": "Portrait", "dress": "keep", "chest": False,
 		"composition": "standing, front view, full body, looking at viewer, simple background"},
-	{"id": "from_behind", "label": "From Behind",
+	{"id": "from_behind", "label": "From Behind", "dress": "keep", "chest": False,
 		"composition": "from behind, back view, standing, looking away"},
-	{"id": "topless", "label": "Topless",
-		"composition": "topless, upper body, front view"},
-	{"id": "nude", "label": "Nude (front)",
-		"composition": "nude, full body, front view"},
-	{"id": "nude_behind", "label": "Nude from Behind",
-		"composition": "nude, from behind, back view, full body"},
+	{"id": "topless", "label": "Topless", "dress": "topless", "chest": True,
+		"composition": "topless, bare breasts, nipples, upper body, front view"},
+	{"id": "nude", "label": "Nude (front)", "dress": "nude", "chest": True,
+		"composition": "completely nude, bare breasts, nipples, full body, front view"},
+	{"id": "nude_behind", "label": "Nude from Behind", "dress": "nude", "chest": False,
+		"composition": "completely nude, from behind, back view, full body"},
 ]
 
-MAX_RETRIES = 3  # per stage (5 was too slow for iteration)
+# Garment keywords for per-stage clothing suppression. Word-boundary regex:
+# "top" matches "tube top"/"crop top" but not "topless"; "bra" does not match
+# "bracelet" or "braids". Jewelry and accessories (tiara, choker, ribbon)
+# are identity and never stripped.
+_TOP_WORDS = ("top|bra|bikini|bandeau|corset|blouse|shirt|sweater|hoodie|"
+	r"jacket|uniform|serafuku|seifuku|kimono|yukata|dress|leotard|bodysuit|"
+	r"camisole")
+_ALL_WORDS = (_TOP_WORDS + r"|skirt|panties|pants|shorts|stockings|thighhighs|"
+	r"socks|shoes|boots|gloves|scarf|cloak|cape|coat|armor|lingerie|clothes|"
+	r"clothing|outfit")
+TOP_GARMENTS = re.compile(r"\b(?:" + _TOP_WORDS + r")\b")
+ALL_GARMENTS = re.compile(r"\b(?:" + _ALL_WORDS + r")\b")
+
+MAX_RETRIES = 10  # per stage — convergence is rejection sampling; more rolls, better odds
 
 
 def _dedupe_tags(tag_string: str) -> str:
@@ -68,6 +87,45 @@ def _strip_composition(tags: str) -> str:
 	}
 	return ", ".join(t.strip() for t in tags.split(",")
 		if t.strip() and t.strip().lower() not in composition_tags)
+
+
+def _strip_clothing(tags: str, dress: str) -> str:
+	"""Drop garment tags from an identity block for undressed stages.
+
+	Signature-outfit tags live in the identity block (correctly), but they
+	beat a late-position `nude` tag in NovelAI — Sable's tube top rendered
+	over every "nude" round. The identity block itself is unchanged; this
+	only affects what a given stage sends to the artist.
+	"""
+	pattern = {"keep": None, "topless": TOP_GARMENTS, "nude": ALL_GARMENTS}.get(dress)
+	if pattern is None:
+		return tags
+	kept = []
+	for tag in tags.split(","):
+		bare = tag.strip().lstrip("{").rstrip("}").strip()
+		if bare and not pattern.search(bare.lower()):
+			kept.append(tag.strip())
+	return ", ".join(kept)
+
+
+def _gate_violations(facts: Optional[dict], stage: dict) -> str:
+	"""Judge the gate's neutral observations against the stage contract.
+	Code, not the vision model, decides compliance — a primed prompt makes
+	the model see what the contract tells it to."""
+	if not facts:
+		return ""
+	problems: list = []
+	garments = (facts.get("garments") or "").strip().lower()
+	if garments and garments not in ("none", "none.", "n/a", "-"):
+		pattern = ALL_GARMENTS if stage.get("dress") == "nude" else TOP_GARMENTS
+		bad = [g.strip() for g in garments.split(",")
+			if g.strip() and pattern.search(g.strip())]
+		if bad:
+			problems.append("garments: " + ", ".join(bad))
+	nipples = (facts.get("nipples") or "").strip().lower()
+	if stage.get("chest") and nipples != "drawn":
+		problems.append(f"nipples {nipples or 'unreported'}")
+	return "; ".join(problems)
 
 
 async def advice_page_handler(request: web.Request) -> web.Response:
@@ -105,6 +163,8 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 	if not or_key:
 		return web.json_response({"error": "no openRouterToken — critique needs the vision model"}, status=400)
 	critique_model = (request.app.get("config") or {}).get("critique_model", CRITIQUE_MODEL_DEFAULT)
+	compliance_model = (request.app.get("config") or {}).get("compliance_model",
+		COMPLIANCE_MODEL_DEFAULT)
 
 	response = web.StreamResponse(headers={
 		"Content-Type": "application/x-ndjson", "Cache-Control": "no-cache"})
@@ -145,16 +205,22 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		stage_id = stage["id"]
 		stage_label = stage["label"]
 		stage_composition = stage["composition"]
-		stage_result = {"id": stage_id, "label": stage_label, "status": "skipped",
+		stage_result = {"id": stage_id, "label": stage_label, "status": "pending",
 			"attempts": 0, "notes": ""}
+		critique: Optional[dict] = None
 		stage_db_id = database.start_advice_stage(run_id, stage_id, stage_label)
 		await emit({"event": "stage", "phase": "start", "stage": stage_id,
 			"label": stage_label, "run_id": run_id})
 
 		for retry in range(MAX_RETRIES):
 			stage_result["attempts"] = retry + 1
-			# combine identity + this stage's composition
-			full_prompt = f"{identity_tags}, {stage_composition}"
+			# combine identity (clothing suppressed per stage) + composition
+			stage_identity = _strip_clothing(identity_tags, stage.get("dress", "keep"))
+			full_prompt = f"{stage_identity}, {stage_composition}"
+			# which of her tags this view suppresses (so she knows why they're gone)
+			kept_keys = {t.strip().lower() for t in stage_identity.split(",") if t.strip()}
+			suppressed_tags = ", ".join(t.strip() for t in identity_tags.split(",")
+				if t.strip() and t.strip().lower() not in kept_keys)
 
 			await emit({"event": "step", "phase": "generating", "stage": stage_id,
 				"retry": retry + 1, "prompt": full_prompt})
@@ -179,11 +245,27 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			await emit({"event": "image", "stage": stage_id, "retry": retry + 1,
 				"url": url, "prompt": massaged.effective, "run_id": run_id})
 
+			# neutral compliance gate — cheap model reports what's drawn,
+			# code judges it against the stage contract, so the persona
+			# never wastes her critique on a non-compliant image
+			if stage.get("dress") in ("topless", "nude"):
+				facts = await stage_compliance_check(or_key, compliance_model,
+					bytes(image.data))
+				violation = _gate_violations(facts, stage)
+				if violation:
+					stage_result["notes"] = f"compliance gate: {violation[:70]}"
+					await emit({"event": "step", "phase": "gate-retry",
+						"stage": stage_id, "retry": retry + 1,
+						"violation": violation})
+					continue
+
 			await emit({"event": "step", "phase": "critiquing", "stage": stage_id,
 				"retry": retry + 1})
 			critique = await character_critique(or_key, critique_model, name,
 				description, identity_tags, bytes(image.data),
-				stage_label=stage_label, stage_composition=stage_composition)
+				stage_label=stage_label, stage_composition=stage_composition,
+				negative_tags=current_negative,
+				suppressed_tags=suppressed_tags)
 			if critique is None or (not critique.get("verdict")
 					and not critique.get("wrong") and not critique.get("feel")):
 				# blank/unparseable critique — treat as a retryable failure
@@ -193,6 +275,11 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 				continue
 
 			all_critiques.append(critique)
+
+			# fold her NEVER-USE tags into the run's negative prompt
+			if critique.get("never"):
+				merged = ", ".join(filter(None, [current_negative, critique["never"]]))
+				current_negative = _dedupe_tags(merged)
 			await emit({"event": "critique", "stage": stage_id, "retry": retry + 1,
 				**critique})
 
@@ -220,13 +307,13 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 				await emit({"event": "step", "phase": "retrying", "stage": stage_id,
 					"retry": retry + 1})
 		else:
-			# retries exhausted without convergence
-			if stage_result["status"] not in ("converged", "skipped"):
+			# retries exhausted without convergence (safety/generation breaks
+			# set "skipped" themselves and never reach here)
+			if stage_result["status"] == "pending":
 				stage_result["status"] = "unresolved"
-			elif stage_result["status"] == "pending":
-				stage_result["status"] = "unresolved"
-				last = all_critiques[-1] if all_critiques else {}
-				stage_result["notes"] = last.get("wrong", "did not converge")
+				if not stage_result["notes"]:
+					last = all_critiques[-1] if all_critiques else {}
+					stage_result["notes"] = last.get("wrong", "did not converge")
 
 		stage_results.append(stage_result)
 		attempts_used: int = stage_result["attempts"]  # type: ignore[assignment]
@@ -242,27 +329,35 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		f"{s['label']}: {s['status']}"
 		+ (f" ({s['notes'][:120]})" if s["notes"] else "")
 		for s in stage_results)
-	advice_text = await character_advice(or_key, critique_model, name,
-		description, rounds_summary, final_tags=identity_tags,
-		final_negative=current_negative)
+	converged_count = sum(1 for s in stage_results if s["status"] == "converged")
+	advice_text = ""
+	try:
+		advice_text = await character_advice(or_key, critique_model, name,
+			description, rounds_summary, final_tags=identity_tags,
+			final_negative=current_negative) or ""
+	except Exception:
+		# the stages are the expensive part — never lose them to a tail failure
+		LOGGER.exception("final advice failed for %s — finalizing run %d without it",
+			name, run_id)
 
 	# save to advice_runs + characters
-	converged_count = sum(1 for s in stage_results if s["status"] == "converged")
 	database.finish_advice_run(run_id, identity_tags, current_negative,
-		advice_text or "", converged_count, len(STAGES))
-	conn = database.connect()
+		advice_text, converged_count, len(STAGES))
 	try:
-		conn.execute("UPDATE characters SET canonical_tags = ?, advice = ?,"
-			" updated_at = CURRENT_TIMESTAMP WHERE name = ?",
-			(identity_tags, advice_text or "", name))
-		conn.commit()
-	finally:
-		conn.close()
+		conn = database.connect()
+		try:
+			conn.execute("UPDATE characters SET canonical_tags = ?, advice = ?,"
+				" updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+				(identity_tags, advice_text, name))
+			conn.commit()
+		finally:
+			conn.close()
+	except Exception:
+		LOGGER.exception("characters-table update failed for %s", name)
 
-	converged_count = sum(1 for s in stage_results if s["status"] == "converged")
 	await emit({"event": "done", "run_id": run_id,
 		"final_prompt": identity_tags,
-		"final_negative": current_negative, "advice": advice_text or "",
+		"final_negative": current_negative, "advice": advice_text,
 		"stage_results": stage_results,
 		"satisfied": converged_count == len(STAGES),
 		"converged_count": converged_count, "total_stages": len(STAGES)})

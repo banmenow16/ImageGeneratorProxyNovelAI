@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import TYPE_CHECKING, Optional, Protocol
+
+if TYPE_CHECKING:
+	from imagine_generator_proxy.prompts import PromptMassager
 
 
 @dataclass
@@ -29,3 +32,12 @@ class ImageGenerator(Protocol):
 
 	async def generate(self, prompt: str, negative_prompt: str,
 			prompt_is_complete: bool) -> Optional[GeneratedImage]: ...
+
+
+@dataclass
+class Backend:
+	"""A selectable generation backend: generator + its ruleset-matched massager."""
+	name: str
+	display: str
+	generator: "ImageGenerator"
+	massager: "PromptMassager"  # noqa: F821 — TYPE_CHECKING import

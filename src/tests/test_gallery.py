@@ -6,6 +6,7 @@ import asyncio
 import os
 import sqlite3
 import tempfile
+import time
 from pathlib import Path
 
 from imagine_generator_proxy.prompts.massager import LEGACY_NEGATIVE_BLOCKS
@@ -38,6 +39,11 @@ def _make_app(tmp_path: Path) -> dict:
 	char_dir.mkdir(parents=True)
 	(char_dir / "abc123.png").write_bytes(b"\x89PNG-fake")
 	(char_dir / "fff999.png").write_bytes(b"\x89PNG-fake")  # no DB row
+	# cards sort by mtime, newest first — pin the order or the two writes can
+	# straddle a timestamp tick and flip which card the link assertions see
+	now = time.time()
+	os.utime(char_dir / "abc123.png", (now, now))
+	os.utime(char_dir / "fff999.png", (now - 86400, now - 86400))
 	return {"cache_dir": cache, "db_path": Path(db)}
 
 
