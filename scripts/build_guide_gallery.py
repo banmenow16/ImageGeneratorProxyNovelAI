@@ -219,7 +219,10 @@ def main() -> None:
 			("N_swollen", "swollen nipples"),
 			("N_mont", "glands of montgomery"),
 			("N_w_mont", "1.5::glands of montgomery::"),
-			("N_large_areolae", "large areolae (plural)")):
+			("N_large_areolae", "large areolae (plural)"),
+			("MG_plain", "montgomery glands (plain)"),
+			("MG_weight", "1.5::montgomery glands::"),
+			("N_w_mont", "1.5::glands of montgomery::")):
 		reads = [bench3_judged.get(f"{label}_s{s}", "")[:55].replace("\n", " ")
 			for s in (1, 2)]
 		f_rows.append({"tag": tag, "note": " | ".join(reads),
