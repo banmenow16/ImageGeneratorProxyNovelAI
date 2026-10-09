@@ -32,7 +32,7 @@ LOGGER = logging.getLogger(__name__)
 PAGE_PATH = Path(__file__).parent / "advice.html"
 
 CRITIQUE_MODEL_DEFAULT = "x-ai/grok-4.7"
-COMPLIANCE_MODEL_DEFAULT = "qwen/qwen3-vl-32b-instruct"
+COMPLIANCE_MODEL_DEFAULT = "qwen/qwen3-vl-235b-a22b-instruct"
 
 STAGES = [
 	{"id": "portrait", "label": "Portrait", "dress": "keep", "chest": False,
@@ -280,6 +280,8 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 				facts = await stage_compliance_check(or_key, compliance_model,
 					bytes(image.data))
 				violation = _gate_violations(facts, stage)
+				database.record_gate_check(stage_db_id, run_id, retry + 1,
+					facts, violation)
 				if violation:
 					stage_result["notes"] = f"compliance gate: {violation[:70]}"
 					await emit({"event": "step", "phase": "gate-retry",

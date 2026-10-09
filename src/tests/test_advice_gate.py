@@ -140,3 +140,21 @@ def test_undressed_stage_flags_garments():
 	violation = _gate_violations(_facts(garments="black tube top"),
 		STAGE_BY_ID["topless"])
 	assert "garments" in violation
+
+
+def test_gate_checks_persist_to_db(tmp_path):
+	import sqlite3
+	from imagine_generator_proxy.server.storage import Database
+	db = Database(tmp_path / "gate.db")
+	db.initialize()
+	run_id = db.start_advice_run("Naimi", "novelai", "hash")
+	stage_id = db.start_advice_stage(run_id, "topless", "Topless")
+	facts = {"nipples": "drawn", "genitals": "out_of_view", "facing": "front",
+		"buttocks": "out_of_view", "garments": "none", "raw": "NIPPLES: drawn"}
+	db.record_gate_check(stage_id, run_id, 1, facts, "")
+	db.record_gate_check(stage_id, run_id, 2, None, "")  # fail-open: no row
+	conn = sqlite3.connect(str(db.path))
+	rows = conn.execute("SELECT retry_number, nipples, violation FROM"
+		" advice_gate_checks ORDER BY retry_number").fetchall()
+	conn.close()
+	assert rows == [(1, "drawn", "")]  # only the observed attempt persisted

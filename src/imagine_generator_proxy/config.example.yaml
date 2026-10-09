@@ -37,6 +37,7 @@ token: "pst-YOUR_TOKEN_HERE"
 # party) and costs a small per-generation API fee.
 # openRouterToken: "sk-or-v1-..."  # required when vision_review is true
 # vision_review: true              # default false (no review, no upload, no cost)
-# reviewer_model: qwen/qwen3-vl-32b-instruct        # cheap first pass
+# reviewer_model: qwen/qwen3-vl-235b-a22b-instruct # cheap first pass
+#   (32b deprecated on OpenRouter 2026-10-09; 235b is the drop-in)
 # reviewer_escalation_model: x-ai/grok-4.7         # second opinion on age flags
 # vision_review_retries: 1         # quality-rejection regenerations (new seed)

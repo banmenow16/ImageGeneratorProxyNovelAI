@@ -24,7 +24,7 @@ from imagine_generator_proxy.controllers.base import bad_request, json_body
 
 LOGGER = logging.getLogger(__name__)
 
-VISION_MODEL_DEFAULT = "qwen/qwen3-vl-32b-instruct"
+VISION_MODEL_DEFAULT = "qwen/qwen3-vl-235b-a22b-instruct"
 MAX_IMAGES_PER_CALL = 4
 MIN_BASE64_LENGTH = 256  # below this a "payload" is probably a path
 

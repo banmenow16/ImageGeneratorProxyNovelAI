@@ -107,7 +107,24 @@ def ensure_db_schema(conn: sqlite3.Connection) -> None:
 		critique_feel TEXT,
 		image_path TEXT
 	)''')
-	# Experiment workbench: provenance for /experiment runsExperiment workbench: provenance for /experiment runs
+	# Compliance-gate observations: the vision model's neutral facts for
+	# every gated attempt — including gate-rejected ones, which never reach
+	# advice_rounds. Preserved so run analysis doesn't lose what the gate saw.
+	conn.execute('''CREATE TABLE IF NOT EXISTS advice_gate_checks (
+		id INTEGER PRIMARY KEY,
+		stage_db_id INTEGER NOT NULL REFERENCES advice_stages(id),
+		run_id INTEGER NOT NULL REFERENCES advice_runs(id),
+		retry_number INTEGER NOT NULL,
+		nipples TEXT,
+		genitals TEXT,
+		facing TEXT,
+		buttocks TEXT,
+		garments TEXT,
+		raw_text TEXT,
+		violation TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)''')
+	# Experiment workbench: provenance for /experiment runs
 	conn.execute('''CREATE TABLE IF NOT EXISTS experiment_runs (
 		id INTEGER PRIMARY KEY,
 		character TEXT,
@@ -229,6 +246,28 @@ class Database:
 				" VALUES (?, ?, ?)", (run_id, stage_id, stage_label))
 			conn.commit()
 			return int(cur.lastrowid or 0)
+		finally:
+			conn.close()
+
+	def record_gate_check(self, stage_db_id: int, run_id: int, retry: int,
+			facts: Optional[dict], violation: str) -> None:
+		"""Persist one compliance-gate observation — including gate-rejected
+		attempts, which never reach record_advice_round. A fail-open gate
+		(facts is None) records nothing: there was no observation."""
+		if facts is None:
+			return
+		conn = self.connect()
+		try:
+			conn.execute(
+				"INSERT INTO advice_gate_checks (stage_db_id, run_id,"
+				" retry_number, nipples, genitals, facing, buttocks, garments,"
+				" raw_text, violation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				(stage_db_id, run_id, retry,
+					str(facts.get("nipples", "")), str(facts.get("genitals", "")),
+					str(facts.get("facing", "")), str(facts.get("buttocks", "")),
+					str(facts.get("garments", ""))[:500],
+					str(facts.get("raw", ""))[:800], violation[:500]))
+			conn.commit()
 		finally:
 			conn.close()
 

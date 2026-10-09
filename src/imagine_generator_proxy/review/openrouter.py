@@ -34,7 +34,7 @@ from imagine_generator_proxy.review.base import Reviewer, Verdict
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_FIRST_PASS_MODEL = "qwen/qwen3-vl-32b-instruct"
+DEFAULT_FIRST_PASS_MODEL = "qwen/qwen3-vl-235b-a22b-instruct"
 DEFAULT_ESCALATION_MODEL = "x-ai/grok-4.7"
 
 QC_PROMPT = (
@@ -48,7 +48,9 @@ QC_PROMPT = (
 	"only 'VERDICT: SKIP_MINOR'. When (and only when) your verdict is BAD, add one "
 	"final line 'FIX: <comma-separated entries>' proposing concrete tag repairs: "
 	"a plain entry adds the tag to the positive prompt, an entry like 'neg:<tag>' "
-	"adds <tag> to the negative prompt. Prefer pose/stability/composition tags "
+	"adds <tag> to the negative prompt, and an entry like '1.5::tag::' raises a "
+	"stubborn tag's weight (use for colors that keep drifting, e.g. "
+	"'1.5::silver hair::'). Prefer pose/stability/composition tags "
 	"(e.g. 'arms at sides', 'hands in lap', 'sitting upright', 'neg:fused fingers'). "
 	"NEVER propose removing or weakening body-size descriptors or character-identity "
 	"tags — those are fixed preferences - and NEVER propose composition changes: no 'solo', no removing figures the scene describes; correct the existing figures, don't delete them. Maximum 6 entries."

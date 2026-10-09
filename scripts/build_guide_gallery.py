@@ -68,6 +68,18 @@ def main() -> None:
 	claims = {r["label"]: r["path"] for r in
 		load_ndjson(EXPERIMENTS / "guide_experiments_results.ndjson")
 		if r.get("kind") == "gen"}
+	bench2_events = load_ndjson(EXPERIMENTS / "bench2.ndjson")
+	bench2 = {r["label"]: r["path"] for r in bench2_events
+		if r.get("kind") == "gen"}
+	bench2_judged = {r["label"]: r.get("text", "") for r in bench2_events
+		if r.get("kind") == "judge"}
+
+	def pair_wins(a: str, b: str) -> dict:
+		wins = {a: 0, b: 0, "EQUAL": 0}
+		for r in bench2_events:
+			if r.get("kind") == "pairwise" and {r["a"], r["b"]} == {a, b}:
+				wins[r["winner"]] = wins.get(r["winner"], 0) + 1
+		return wins
 
 	# 3. copy into the gallery under clean names
 	def copy(src_name: str, src_path: str) -> str:
@@ -109,22 +121,117 @@ def main() -> None:
 			"comparisons; evidence in data/experiments/guide_claims_20261009/.",
 		"rows": rows})
 
-	# --- emphasis doesn't scale -------------------------------------------
-	emph = []
-	for rep in (1, 2):
-		for name, src in ((f"emph_huge_{rep}", f"B_huge_{rep}.png"),
-				(f"emph_braced_{rep}", f"C_huge_emph_{rep}.png")):
-			if (OLD_LADDER / src).is_file():
-				shutil.copyfile(OLD_LADDER / src, GALLERY / f"{name}.png")
-				emph.append(name)
-	sections.append({"title": "Emphasis does not scale (earlier experiment)",
-		"intro": "`{{huge breasts}}` renders the same or smaller than plain "
-			"`huge` — braces are for ignored features, not sizing. Different "
-			"session/identity than the ladder above.",
-		"rows": [{"tag": "huge breasts", "note": "plain",
-				"images": [n for n in emph if n.startswith("emph_huge")]},
-			{"tag": "{{huge breasts}}", "note": "braced — not bigger",
-				"images": [n for n in emph if n.startswith("emph_braced")]}]})
+	# --- emphasis doesn't scale (bench 2, same identity as the ladder) -----
+	emph_rows = [
+		{"tag": "huge breasts", "note": "plain control",
+			"images": [copy(f"emph_huge_{rep}.png", bench2[f"G_plain_s{rep}"])
+				for rep in (1, 2)]},
+		{"tag": "{{huge breasts}}", "note": "braced — same size or smaller, "
+			"never bigger (pairwise 4:4, a wash)",
+			"images": [copy(f"emph_braced_{rep}.png", bench2[f"G_braced_s{rep}"])
+				for rep in (1, 2)]},
+	]
+	sections.append({"title": "Emphasis does not scale",
+		"intro": "`{{huge breasts}}` rendered the same as plain `huge` "
+			"(bench 2, order-swapped pairwise: 4:4). Braces are for ignored "
+			"features, not sizing.",
+		"rows": emph_rows})
+
+	# --- beyond enormous ----------------------------------------------------
+	e_rows = [{"tag": "enormous breasts (control)", "note": "the ceiling",
+		"images": ["enormous_1.png", "enormous_2.png"]}]
+	e_specs = (
+		("E_hyper", "hyper breasts", "ties enormous"),
+		("E_gigantic", "gigantic breasts", "ties enormous (and rendered "
+			"below huge in bench 1 — unstable word)"),
+		("E_w13", "1.3::enormous breasts::", "ties plain enormous"),
+		("E_w15", "1.5::enormous breasts::", "ties plain enormous"))
+	for label, tag, verdict in e_specs:
+		wins = pair_wins("E_enormous", label)
+		e_rows.append({"tag": tag,
+			"note": f"{verdict} — pairwise {wins.get('E_enormous', 0)}:"
+				f"{wins.get(label, 0)}",
+			"images": [copy(f"{label}_{rep}.png", bench2[f"{label}_s{rep}"])
+				for rep in (1, 2)]})
+	sections.append({"title": "Nothing renders bigger than enormous",
+		"intro": "Every candidate for going past `enormous breasts` landed "
+			"within judge resolution of it (bench 2). Enormous is the "
+			"ceiling; past it only torso distortion, which is a defect.",
+		"rows": e_rows})
+
+	# --- numeric weights hold colors ---------------------------------------
+	b_rows = []
+	for label, tag, note in (
+			("B_plain", "silver hair, tiara", "hair drifted gray once; tiara gold both"),
+			("B_weight", "1.5::silver hair::, tiara", "hair silver 2/2 — the weight holds")):
+		b_rows.append({"tag": tag, "note": note,
+			"images": [copy(f"{label}_{rep}.png", bench2[f"{label}_s{rep}"])
+				for rep in (1, 2)]})
+	sections.append({"title": "Numeric weights hold stubborn colors",
+		"intro": "`N::tag::` is the strongest hold, above braces. The weight "
+			"protects only the tag it wraps — the unweighted tiara kept "
+			"drifting gold.",
+		"rows": b_rows})
+
+	# --- framing ladder -----------------------------------------------------
+	c_rows = []
+	for label, tag in (("C_full", "full body"), ("C_cowboy", "cowboy shot"),
+			("C_wide", "wide shot")):
+		reads = [bench2_judged.get(f"{label}_s{s}", "")[:60] for s in (1, 2)]
+		c_rows.append({"tag": tag, "note": " | ".join(reads),
+			"images": [copy(f"{label}_{rep}.png", bench2[f"{label}_s{rep}"])
+				for rep in (1, 2)]})
+	sections.append({"title": "Framing ladder",
+		"intro": "`full body` reliable (feet 2/2, front view); `cowboy shot` "
+			"renders waist-tight, tighter than the danbooru mid-thigh "
+			"convention; `wide shot` pulls back to half-figure.",
+		"rows": c_rows})
+
+	# --- brackets weaken? (no measurable effect) -----------------------------
+	a_rows = []
+	for label, tag in (("A_none", "(no mess tag)"), ("A_plain", "messy hair"),
+			("A_braced", "{{{messy hair}}}"), ("A_bracketed", "[[[messy hair]]]")):
+		reads = [bench2_judged.get(f"{label}_s{s}", "")[:40] for s in (1, 2)]
+		a_rows.append({"tag": tag, "note": " | ".join(reads),
+			"images": [copy(f"{label}_{rep}.png", bench2[f"{label}_s{rep}"])
+				for rep in (1, 2)]})
+	sections.append({"title": "Square brackets show no measurable weakening",
+		"intro": "Officially `[tag]` decreases emphasis — but `[[[messy hair]]]` "
+			"rendered the same as plain (messiness reads 6/4 vs 6/6). Don't "
+			"rely on brackets for tuning.",
+		"rows": a_rows})
+
+	# --- nipple recipes ------------------------------------------------------
+	f_rows = []
+	for label, tag in (("F_control", "bare breasts, nipples"),
+			("F_puffy", "puffy erect nipples"), ("F_swollen", "swollen nipples"),
+			("F_small_areola", "small areola"),
+			("F_textured", "nipples, detailed textured areola")):
+		reads = [bench2_judged.get(f"{label}_s{s}", "")[:55] for s in (1, 2)]
+		f_rows.append({"tag": tag, "note": " | ".join(reads),
+			"images": [copy(f"{label}_{rep}.png", bench2[f"{label}_s{rep}"])
+				for rep in (1, 2)]})
+	sections.append({"title": "Nipple recipes: existence works, style is inert",
+		"intro": "All five variants drew nipples (8/8 judged) — but every "
+			"style recipe rendered the same flat-subtle result. The cue "
+			"controls WHETHER, not HOW.",
+		"rows": f_rows})
+
+	# --- garment colors ------------------------------------------------------
+	d_rows = []
+	for label, tag in (("D_uncolored", "shirt, skirt"),
+			("D_colored", "white shirt, blue skirt")):
+		reads = [bench2_judged.get(f"{label}_s{s}", "")[:50] for s in (1, 2, 3)]
+		d_rows.append({"tag": tag, "note": " | ".join(reads),
+			"images": [copy(f"{label}_{rep}.png", bench2[f"{label}_s{rep}"])
+				for rep in (1, 2, 3)]})
+	sections.append({"title": "Color every garment",
+		"intro": "Uncolored garments get a consistent but arbitrary default "
+			"palette; naming colors is what makes the palette yours.",
+		"rows": d_rows})
+
+	# --- old emphasis renders superseded by bench 2 above -------------------
+	_ = OLD_LADDER  # earlier-session evidence kept in data/experiments/size_ladder/
 
 	# --- genital cues ------------------------------------------------------
 	cue_rows = []

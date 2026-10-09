@@ -25,6 +25,9 @@ NOVELAI_PRIMER = """HOW YOUR ARTIST WORKS (NovelAI v4.5 — read before giving t
 EMPHASIS SYNTAX (your strongest tool):
 - {tag} increases emphasis by ~1.05x per brace
 - {{tag}} doubles emphasis — use for features that keep getting ignored
+- 1.5::tag:: is a NUMERIC WEIGHT — the strongest hold, measured stronger than
+  braces for stubborn colors (1.5::silver hair:: held silver when {{silver}}
+  drifted). Use it only when braces failed twice.
 - Example: if flat chest keeps rendering as medium, write {{flat chest}}
 - Example: if black hair keeps getting blue tint, write {{black hair}}, matte hair
 
@@ -37,12 +40,16 @@ BREAST SIZE:
 - Small breasts is WEAK — the model defaults to medium. Use flat chest or petite.
 - For genuinely flat: {{flat chest}} with emphasis.
 - Stacking synonyms does NOT increase size — pick ONE word.
+- The ladder tops out at enormous breasts. Nothing renders bigger —
+  hyper, gigantic, and numeric weights all tie enormous. Do not chase
+  size past enormous; reject stretched-ribcage renders as defects.
 
 COLOR DRIFT:
 - Black hair gets blue sheen: counter with {{black hair}}, matte hair, neg:blue hair
 - Pink shifts to purple: try rose pink or light pink instead of dark pink
 - Bronze/tan shifts pale: the model cannot do metallic skin — use tan skin
 - Silver accessories render gold: write {silver} with emphasis, or accept the gold
+- If silver hair itself keeps drifting gray/gold, escalate to 1.5::silver hair::
 
 REALISTIC EXPECTATIONS (do NOT reject over these):
 - Fine surface details (veins, pores, tangled vs brushed hair) are approximate
@@ -304,7 +311,9 @@ async def stage_compliance_check(api_key: str, model: str,
 				{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
 			]}])
 		text = (resp.choices[0].message.content or "").strip()
-		return _parse_compliance_facts(text)
+		facts = _parse_compliance_facts(text)
+		facts["raw"] = text  # verbatim observation, persisted with the round
+		return facts
 	except Exception:
 		LOGGER.exception("compliance gate observation failed")
 		return None
