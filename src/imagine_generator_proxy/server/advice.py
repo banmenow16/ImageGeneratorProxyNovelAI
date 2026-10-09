@@ -224,9 +224,15 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		stage_composition = stage["composition"]
 		# tailed species (lamia, dragonkin) drape the tail between the legs
 		# on front nudes, hiding the genitalia the stage exists to verify —
-		# angle it aside for genitalia stages only
+		# push the tail back for genitalia stages (position hint + the
+		# trained-tag counter in the negative; "to the side" alone was too
+		# weak: 9/10 gate rejections on Sable run 21)
 		if stage.get("genitals") and re.search(r"\btail\b", identity_tags, re.IGNORECASE):
-			stage_composition += ", tail to the side"
+			stage_composition += ", hips forward, tail trailing behind"
+		# scoped to this stage only — current_negative persists across stages
+		# and the tail drapes naturally in nude_behind
+		stage_negative = ("tail between legs" if stage.get("genitals")
+			and re.search(r"\btail\b", identity_tags, re.IGNORECASE) else "")
 		stage_result = {"id": stage_id, "label": stage_label, "status": "pending",
 			"attempts": 0, "notes": ""}
 		critique: Optional[dict] = None
@@ -252,7 +258,7 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 				await emit({"event": "step", "phase": "skipped", "stage": stage_id})
 				break
 
-			negative = ", ".join(filter(None, [current_negative,
+			negative = ", ".join(filter(None, [current_negative, stage_negative,
 				", ".join(massaged.negative_additions) if massaged.negative_additions else ""]))
 			image = await generator.generate(massaged.effective, negative, prompt_is_complete=True)
 			if image is None:
