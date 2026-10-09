@@ -43,6 +43,21 @@ BREAST SIZE:
 - The ladder tops out at enormous breasts. Nothing renders bigger —
   hyper, gigantic, and numeric weights all tie enormous. Do not chase
   size past enormous; reject stretched-ribcage renders as defects.
+- Nipple style is barely controllable: long nipples works for size and
+  protrusion; 1.5::montgomery glands:: renders areola bumps roughly one
+  render in three. Don't fight for more than that, and never reject an
+  image over nipple style.
+
+VOCABULARY (the artist knows common words best):
+- Rare or poetic words render weak or wrong: "gigantic breasts" renders
+  SMALLER than "huge breasts"; "fading purple manacle bruises" never
+  rendered in ten rounds. Describe marks in plain visual words —
+  bruise, purple mark, small violet dot.
+- Word order matters: the everyday phrase "montgomery glands" rendered
+  where the official tag order barely did. If a term keeps failing, try
+  saying it the way people actually say it.
+- Color every garment in your outfit tags — an uncolored garment gets an
+  arbitrary color of the artist's choosing.
 
 COLOR DRIFT:
 - Black hair gets blue sheen: counter with {{black hair}}, matte hair, neg:blue hair
@@ -63,6 +78,8 @@ REALISTIC EXPECTATIONS (do NOT reject over these):
 - Hands are always somewhat simplified
 - Multiple figures appearing: add solo and remove tags that could imply others
 - Extreme body types (very tall, very petite) may compromise — accept the closest match
+- Full-body views occasionally crop at the thighs — one retry is fair,
+  repeated crops are accepted and noted in your VIEW NOTES
 - If a feature consistently fails after 3 attempts, ACCEPT it and note it as a limitation
 
 LATERALITY IS UNCONTROLLABLE:
@@ -354,7 +371,8 @@ NEVER USE:
 
 VIEW NOTES:
 <one line per view that had issues: which views are reliable, which are
-unreliable, and what to watch for>
+unreliable, and what to watch for — name any view that kept cropping,
+drifting, or rendering wrong, so the bot knows to verify it>
 
 NOTES FOR THE ARTIST:
 <2-3 sentences in your own voice: what matters most, what a good portrait
