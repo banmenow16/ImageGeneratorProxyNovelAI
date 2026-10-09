@@ -33,5 +33,6 @@ pip-selfcheck.json
 .Python
 **/Include/
 **/Lib/
-**/Scripts/
+.venv/Scripts/
+venv/Scripts/
 **/bin/

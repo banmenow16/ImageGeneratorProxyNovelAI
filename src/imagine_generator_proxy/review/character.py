@@ -225,20 +225,67 @@ async def character_critique(api_key: str, model: str, name: str,
 
 
 COMPLIANCE_PROMPT = """Describe this image factually for an adult-content
-pipeline. Look closely at the chest area before answering. Answer in
-EXACTLY two lines:
+pipeline. Look closely at the named area before answering each line.
+Answer in EXACTLY five lines:
 NIPPLES: <"drawn: <one detail>" if areolae/nipples are visibly drawn, or
 "absent: smooth featureless skin", or "covered: <by what>", or "chest out of view">
 GARMENTS: <none, or every garment/covering item visible — including
 pasties, wraps, fabric, armor>
+GENITALS: <"drawn: <one detail>" if a vulva is visibly drawn, or
+"absent: smooth featureless skin", or "covered: <by what, e.g. tail, hands>",
+or "out of view">
+FACING: <"back" if the subject's back faces the camera, "front" if the
+face or chest faces the camera, or "side" if angled between>
+BUTTOCKS: <"cleft drawn" if the gluteal cleft is visibly drawn, or
+"featureless", "covered: <by what>", or "out of view">
 Report only what is literally drawn."""
+
+
+def _parse_compliance_facts(text: str) -> dict:
+	"""Map the gate model's five fact lines to enum values. Tolerant of
+	missing lines (unreported) so a truncated answer degrades to a
+	fail-open gate decision, never a crash."""
+	garments = re.search(r"GARMENTS:\s*(.+)", text, re.IGNORECASE)
+	nipples_m = re.search(r"NIPPLES:\s*(.+)", text, re.IGNORECASE)
+	genitals_m = re.search(r"GENITALS:\s*(.+)", text, re.IGNORECASE)
+	facing_m = re.search(r"FACING:\s*(.+)", text, re.IGNORECASE)
+	buttocks_m = re.search(r"BUTTOCKS:\s*(.+)", text, re.IGNORECASE)
+
+	def visible_kind(match: "re.Match[str] | None") -> tuple[str, str]:
+		"""drawn/covered/out_of_view/absent classification of a fact line."""
+		raw = match.group(1).strip().lower() if match else ""
+		kind = ("drawn" if raw.startswith("drawn")
+			else "covered" if raw.startswith("covered")
+			else "out_of_view" if "out of view" in raw
+			else "absent" if raw.startswith("absent")
+			else raw[:30] or "unreported")
+		return kind, raw
+
+	nipples, nipples_raw = visible_kind(nipples_m)
+	genitals, _genitals_raw = visible_kind(genitals_m)
+	facing_raw = facing_m.group(1).strip().lower() if facing_m else ""
+	facing = ("back" if facing_raw.startswith("back")
+		else "front" if facing_raw.startswith("front")
+		else "side" if facing_raw.startswith("side")
+		else facing_raw[:20] or "unreported")
+	buttocks_raw = buttocks_m.group(1).strip().lower() if buttocks_m else ""
+	buttocks = ("cleft" if buttocks_raw.startswith("cleft")
+		else "covered" if buttocks_raw.startswith("covered")
+		else "out_of_view" if "out of view" in buttocks_raw
+		else "featureless" if buttocks_raw.startswith("featureless")
+		else buttocks_raw[:20] or "unreported")
+	return {"nipples": nipples, "nipples_raw": nipples_raw[:120],
+		"genitals": genitals, "facing": facing, "buttocks": buttocks,
+		"garments": (garments.group(1).strip() if garments else "")[:200]}
 
 
 async def stage_compliance_check(api_key: str, model: str,
 		image_bytes: bytes) -> Optional[dict]:
 	"""Neutral pre-critique observation: what is literally drawn? Returns
 	{'nipples': drawn|absent|covered|out_of_view, 'nipples_raw': str,
-	'garments': str} or None on failure (fail-open — a flaky gate must
+	'genitals': same enum, 'facing': back|front|side, 'buttocks':
+	cleft|featureless|covered|out_of_view, 'garments': str} or None on
+	failure (fail-open — a flaky gate must
 	never block the pipeline). Deliberately bias-free: the model reports
 	facts only and compliance is judged in code, because a contract-primed
 	prompt makes vision models see what it tells them to (an "expectation"
@@ -251,22 +298,13 @@ async def stage_compliance_check(api_key: str, model: str,
 	img_b64 = base64.b64encode(image_bytes).decode("ascii")
 	try:
 		resp = await client.chat.completions.create(
-			model=model, max_tokens=90, temperature=0.0,
+			model=model, max_tokens=150, temperature=0.0,
 			messages=[{"role": "user", "content": [
 				{"type": "text", "text": COMPLIANCE_PROMPT},
 				{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
 			]}])
 		text = (resp.choices[0].message.content or "").strip()
-		garments = re.search(r"GARMENTS:\s*(.+)", text, re.IGNORECASE)
-		nipples_m = re.search(r"NIPPLES:\s*(.+)", text, re.IGNORECASE)
-		raw = nipples_m.group(1).strip().lower() if nipples_m else ""
-		kind = ("drawn" if raw.startswith("drawn")
-			else "covered" if raw.startswith("covered")
-			else "out_of_view" if "out of view" in raw
-			else "absent" if raw.startswith("absent")
-			else raw[:30] or "unreported")
-		return {"nipples": kind, "nipples_raw": raw[:120],
-			"garments": (garments.group(1).strip() if garments else "")[:200]}
+		return _parse_compliance_facts(text)
 	except Exception:
 		LOGGER.exception("compliance gate observation failed")
 		return None

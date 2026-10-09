@@ -38,13 +38,16 @@ STAGES = [
 	{"id": "portrait", "label": "Portrait", "dress": "keep", "chest": False,
 		"composition": "standing, front view, full body, looking at viewer, simple background"},
 	{"id": "from_behind", "label": "From Behind", "dress": "keep", "chest": False,
+		"rear": True,
 		"composition": "from behind, back view, standing, looking away"},
 	{"id": "topless", "label": "Topless", "dress": "topless", "chest": True,
 		"composition": "topless, bare breasts, nipples, upper body, front view"},
 	{"id": "nude", "label": "Nude (front)", "dress": "nude", "chest": True,
-		"composition": "completely nude, bare breasts, nipples, full body, front view"},
+		"genitals": True,
+		"composition": "completely nude, bare breasts, nipples, pussy, detailed realistic folds, full body, front view"},
 	{"id": "nude_behind", "label": "Nude from Behind", "dress": "nude", "chest": False,
-		"composition": "completely nude, from behind, back view, full body"},
+		"rear": True, "buttocks": True,
+		"composition": "completely nude, from behind, back view, ass, full body"},
 ]
 
 # Garment keywords for per-stage clothing suppression. Word-boundary regex:
@@ -116,7 +119,10 @@ def _gate_violations(facts: Optional[dict], stage: dict) -> str:
 		return ""
 	problems: list = []
 	garments = (facts.get("garments") or "").strip().lower()
-	if garments and garments not in ("none", "none.", "n/a", "-"):
+	# garment policing only applies to undressed stages — on keep stages the
+	# canonical outfit is supposed to be there
+	if stage.get("dress", "keep") != "keep" and garments \
+			and garments not in ("none", "none.", "n/a", "-"):
 		pattern = ALL_GARMENTS if stage.get("dress") == "nude" else TOP_GARMENTS
 		bad = [g.strip() for g in garments.split(",")
 			if g.strip() and pattern.search(g.strip())]
@@ -125,6 +131,17 @@ def _gate_violations(facts: Optional[dict], stage: dict) -> str:
 	nipples = (facts.get("nipples") or "").strip().lower()
 	if stage.get("chest") and nipples != "drawn":
 		problems.append(f"nipples {nipples or 'unreported'}")
+	genitals = (facts.get("genitals") or "").strip().lower()
+	if stage.get("genitals") and genitals != "drawn":
+		problems.append(f"genitals {genitals or 'unreported'}")
+	facing = (facts.get("facing") or "").strip().lower()
+	# "side" (three-quarter rear) is a pass — only a fully front-facing
+	# render means the stage failed to produce its view
+	if stage.get("rear") and facing == "front":
+		problems.append(f"facing {facing}")
+	buttocks = (facts.get("buttocks") or "").strip().lower()
+	if stage.get("buttocks") and buttocks != "cleft":
+		problems.append(f"buttocks {buttocks or 'unreported'}")
 	return "; ".join(problems)
 
 
@@ -205,6 +222,11 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		stage_id = stage["id"]
 		stage_label = stage["label"]
 		stage_composition = stage["composition"]
+		# tailed species (lamia, dragonkin) drape the tail between the legs
+		# on front nudes, hiding the genitalia the stage exists to verify —
+		# angle it aside for genitalia stages only
+		if stage.get("genitals") and re.search(r"\btail\b", identity_tags, re.IGNORECASE):
+			stage_composition += ", tail to the side"
 		stage_result = {"id": stage_id, "label": stage_label, "status": "pending",
 			"attempts": 0, "notes": ""}
 		critique: Optional[dict] = None
@@ -248,7 +270,7 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			# neutral compliance gate — cheap model reports what's drawn,
 			# code judges it against the stage contract, so the persona
 			# never wastes her critique on a non-compliant image
-			if stage.get("dress") in ("topless", "nude"):
+			if stage.get("dress") in ("topless", "nude") or stage.get("rear"):
 				facts = await stage_compliance_check(or_key, compliance_model,
 					bytes(image.data))
 				violation = _gate_violations(facts, stage)
