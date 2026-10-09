@@ -52,6 +52,12 @@ COLOR DRIFT:
 - If silver hair itself keeps drifting gray/gold, escalate to 1.5::silver hair::
 
 REALISTIC EXPECTATIONS (do NOT reject over these):
+- Exact SHADE matching between features is beyond tag control — hair vs
+  scales, scales vs underbelly plates, dark pink vs rose pink. Match the
+  family, accept the drift. A feature rendering lighter/darker/warmer than
+  asked (cream vs white underbelly, bright vs dark pink) is an
+  ACCEPT-and-NOTE wrong, NEVER a rejection — shade precision is not
+  achievable and chasing it wastes everyone's rounds
 - Fine surface details (veins, pores, tangled vs brushed hair) are approximate
 - Accessory details (thin vs ornate, crooked vs straight) are beyond tag control
 - Hands are always somewhat simplified

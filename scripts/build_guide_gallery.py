@@ -201,20 +201,33 @@ def main() -> None:
 			"rely on brackets for tuning.",
 		"rows": a_rows})
 
-	# --- nipple recipes ------------------------------------------------------
+	# --- nipple dials (bench 3, close-up) ------------------------------------
+	bench3_events = load_ndjson(EXPERIMENTS / "bench3.ndjson")
+	bench3 = {r["label"]: r["path"] for r in bench3_events if r.get("kind") == "gen"}
+	bench3_judged = {r["label"]: r.get("text", "") for r in bench3_events
+		if r.get("kind") == "judge"}
 	f_rows = []
-	for label, tag in (("F_control", "bare breasts, nipples"),
-			("F_puffy", "puffy erect nipples"), ("F_swollen", "swollen nipples"),
-			("F_small_areola", "small areola"),
-			("F_textured", "nipples, detailed textured areola")):
-		reads = [bench2_judged.get(f"{label}_s{s}", "")[:55] for s in (1, 2)]
+	for label, tag in (("N_control", "(no dial — close-up control)"),
+			("N_long", "long nipples"), ("N_big", "big nipples"),
+			("N_huge", "huge nipples"),
+			("N_w_long_big", "long nipples, 1.5::big nipples::"),
+			("N_puffy", "puffy nipples"), ("N_inverted", "inverted nipples"),
+			("N_w_inverted", "1.5::inverted nipples::"),
+			("N_erect", "erect nipples"),
+			("N_large_areola", "large areola"),
+			("N_w_large_areola", "1.5::large areola::")):
+		reads = [bench3_judged.get(f"{label}_s{s}", "")[:55].replace("\n", " ")
+			for s in (1, 2)]
 		f_rows.append({"tag": tag, "note": " | ".join(reads),
-			"images": [copy(f"{label}_{rep}.png", bench2[f"{label}_s{rep}"])
+			"images": [copy(f"{label}_{rep}.png", bench3[f"{label}_s{rep}"])
 				for rep in (1, 2)]})
-	sections.append({"title": "Nipple recipes: existence works, style is inert",
-		"intro": "All five variants drew nipples (8/8 judged) — but every "
-			"style recipe rendered the same flat-subtle result. The cue "
-			"controls WHETHER, not HOW.",
+	sections.append({"title": "Nipple dials: long is the only dial that turns",
+		"intro": "Torso close-up, n=2 per variant (bench 3; neutral-standing "
+			"recipes were already inert in bench 2). `long nipples` reliably "
+			"renders medium + protruding; weighting `big nipples` alongside "
+			"pushes occasional large. Inverted, puffy, areola size, and bump "
+			"texture: no dial found — inert even at 1.5:: weight. The cue "
+			"controls WHETHER, almost nothing controls HOW.",
 		"rows": f_rows})
 
 	# --- garment colors ------------------------------------------------------
