@@ -5,6 +5,8 @@ Endpoint groups:
 - VisionController    — POST /api/vision/analyze (vision model on stored images)
 - CharacterController — GET /api/characters[/{name}] (Mirror's verified output)
 - AdviceToolsController — /api/advice/* iteration tools
+- OpenAICompatController — /v1/images/generations (OpenAI Images protocol,
+  so external apps can swap this proxy for any compatible backend)
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from imagine_generator_proxy.controllers.advice_tools import AdviceToolsControll
 from imagine_generator_proxy.controllers.base import Controller
 from imagine_generator_proxy.controllers.character_controller import CharacterController
 from imagine_generator_proxy.controllers.generation_controller import GenerationController
+from imagine_generator_proxy.controllers.openai_compat import OpenAICompatController
 from imagine_generator_proxy.controllers.vision_controller import VisionController
 
 __all__ = [
@@ -25,6 +28,7 @@ __all__ = [
 	"AdviceToolsController",
 	"CharacterController",
 	"GenerationController",
+	"OpenAICompatController",
 	"VisionController",
 	"register_controllers",
 ]
@@ -43,6 +47,8 @@ def register_controllers(app: web.Application) -> None:
 		AdviceToolsController(config, backends,
 			str(app.get("generation_backend", "novelai")),
 			Path(app["db_path"]), data_dir),
+		OpenAICompatController(backends,
+			str(app.get("generation_backend", "novelai")), data_dir),
 	]
 	for controller in controllers:
 		controller.add_routes(app.router)
