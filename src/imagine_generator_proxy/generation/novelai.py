@@ -15,16 +15,22 @@ __all__ = ["GeneratedImage", "ImageGenerator", "NovelAIGenerator", "build_preset
 LOGGER = logging.getLogger(__name__)
 
 
-def build_preset(model: ImageModel, add_quality_tags: bool) -> ImagePreset:
+def build_preset(model: ImageModel, add_quality_tags: bool,
+		size: Optional[tuple] = None) -> ImagePreset:
 	"""Build the default preset for `model`.
 
 	`add_quality_tags` controls the library's automatic quality-tag
 	suffix (", location, very aesthetic, masterpiece, no text" on v4.5). It
 	must be False when the prompt massager owns the quality tags, True to
-	keep the historical (legacy) behavior.
+	keep the historical (legacy) behavior. `size` is an optional
+	(width, height) tuple — NovelAI's standard pairs are 832x1216
+	(portrait, the default) and 1216x832 (landscape); lying poses need
+	landscape.
 	"""
 	preset = ImagePreset.from_default_config(model)
 	preset["quality_toggle"] = add_quality_tags
+	if size is not None:
+		preset["resolution"] = size  # library key: "resolution", not "size"
 	return preset
 
 
@@ -50,14 +56,15 @@ class NovelAIGenerator(ImageGenerator):
 		return {}
 
 	async def generate(
-		self, prompt: str, negative_prompt: str, prompt_is_complete: bool
+		self, prompt: str, negative_prompt: str, prompt_is_complete: bool,
+		size: Optional[tuple] = None
 	) -> Optional[GeneratedImage]:
 		"""Generate an image, retrying while NovelAI reports being busy.
 
 		Returns a GeneratedImage on success, or None when NovelAI remains
 		busy after `generation_retries` attempts. See ImageGenerator for the
 		`prompt_is_complete` contract (inverted into the library's
-		quality_toggle here).
+		quality_toggle here). `size` overrides the canvas (width, height).
 		"""
 		max_retries = int(self._config.get("generation_retries", 5))
 		backoff = float(self._config.get("generation_backoff", 1.0))
@@ -66,7 +73,8 @@ class NovelAIGenerator(ImageGenerator):
 		name = None
 		data = None
 
-		preset = build_preset(self._model, add_quality_tags=not prompt_is_complete)
+		preset = build_preset(self._model, add_quality_tags=not prompt_is_complete,
+			size=size)
 
 		async with self._lock:
 			pause = self._last_started + self._min_interval - time.monotonic()

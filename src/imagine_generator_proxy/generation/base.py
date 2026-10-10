@@ -31,7 +31,11 @@ class ImageGenerator(Protocol):
 	"""
 
 	async def generate(self, prompt: str, negative_prompt: str,
-			prompt_is_complete: bool) -> Optional[GeneratedImage]: ...
+			prompt_is_complete: bool,
+			size: Optional[tuple] = None) -> Optional[GeneratedImage]:
+		"""`size` is an optional (width, height) canvas override; None keeps
+		the backend default (portrait)."""
+		...
 
 
 @dataclass

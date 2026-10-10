@@ -1,6 +1,7 @@
 """Direct generation: one image from a JSON request, no review chain.
 
-POST /api/generate  {prompt, negative?, character?, engine?, save?}
+POST /api/generate  {prompt, negative?, character?, engine?, save?,
+size?: portrait|landscape|square}
 → {url, path?, massaged_prompt, negative_used, bytes}
 
 This is the iteration endpoint for applications debugging prompts — the
@@ -23,6 +24,15 @@ from imagine_generator_proxy.generation.base import Backend
 from imagine_generator_proxy.controllers.base import bad_request, json_body
 
 LOGGER = logging.getLogger(__name__)
+
+#: Named canvas presets for the size request option — NovelAI's standard
+#: "Normal" resolutions. Landscape is required for lying poses; portrait
+#: is the historical default.
+SIZES = {
+	"portrait": (832, 1216),
+	"landscape": (1216, 832),
+	"square": (1024, 1024),
+}
 
 
 class GenerationController:
@@ -67,8 +77,12 @@ class GenerationController:
 			", ".join(massaged.negative_additions)
 			if massaged.negative_additions else ""]))
 
+		size = SIZES.get(str(body.get("size") or "portrait").strip().lower())
+		if str(body.get("size") or "").strip() and size is None:
+			return bad_request(f"unknown size {body.get('size')!r}",
+				hint=f"one of: {', '.join(SIZES)}")
 		image = await backend.generator.generate(massaged.effective, negative,
-			prompt_is_complete=True)
+			prompt_is_complete=True, size=size)
 		if image is None:
 			return web.json_response(
 				{"error": "generation failed", "engine": engine}, status=502)
