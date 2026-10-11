@@ -16,7 +16,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def build_preset(model: ImageModel, add_quality_tags: bool,
-		size: Optional[tuple] = None) -> ImagePreset:
+		size: Optional[tuple] = None, steps: Optional[int] = None) -> ImagePreset:
 	"""Build the default preset for `model`.
 
 	`add_quality_tags` controls the library's automatic quality-tag
@@ -31,6 +31,8 @@ def build_preset(model: ImageModel, add_quality_tags: bool,
 	preset["quality_toggle"] = add_quality_tags
 	if size is not None:
 		preset["resolution"] = size  # library key: "resolution", not "size"
+	if steps is not None:
+		preset["steps"] = max(8, min(int(steps), 50))  # clamp: sane sampler range
 	return preset
 
 
@@ -57,14 +59,15 @@ class NovelAIGenerator(ImageGenerator):
 
 	async def generate(
 		self, prompt: str, negative_prompt: str, prompt_is_complete: bool,
-		size: Optional[tuple] = None
+		size: Optional[tuple] = None, steps: Optional[int] = None
 	) -> Optional[GeneratedImage]:
 		"""Generate an image, retrying while NovelAI reports being busy.
 
 		Returns a GeneratedImage on success, or None when NovelAI remains
 		busy after `generation_retries` attempts. See ImageGenerator for the
 		`prompt_is_complete` contract (inverted into the library's
-		quality_toggle here). `size` overrides the canvas (width, height).
+		quality_toggle here). `size` overrides the canvas (width, height); `steps` overrides
+		the sampler step count (default 23; lower = faster, rougher).
 		"""
 		max_retries = int(self._config.get("generation_retries", 5))
 		backoff = float(self._config.get("generation_backoff", 1.0))
@@ -74,7 +77,7 @@ class NovelAIGenerator(ImageGenerator):
 		data = None
 
 		preset = build_preset(self._model, add_quality_tags=not prompt_is_complete,
-			size=size)
+			size=size, steps=steps)
 
 		async with self._lock:
 			pause = self._last_started + self._min_interval - time.monotonic()

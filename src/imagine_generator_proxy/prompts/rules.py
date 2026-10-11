@@ -126,6 +126,48 @@ RULES = [
 		"match": {"type": "tag", "value": "dark pink hair"},
 		"action": {"type": "replace", "value": "rose pink hair"},
 		"notes": "dark pink shifts to purple; rose pink stays closer to intent (11 QC rounds)"},
+	# --- bench-measured existence-cue rescues (guide benches 2/3, 2026-10-09) ---
+	{"id": "ensure-nipples-on-bare-chest", "stage": "enhance", "severity": "safe",
+		"match": {"type": "all", "values": [
+			{"type": "any", "values": [
+				{"type": "tag", "value": "bare breasts"},
+				{"type": "tag", "value": "topless"},
+				{"type": "tag", "value": "nude"},
+				{"type": "tag", "value": "completely nude"},
+			]},
+			{"type": "none", "values": [
+				{"type": "tag", "value": "nipples"},
+				{"type": "tag", "value": "puffy nipples"},
+				{"type": "tag", "value": "puffy erect nipples"},
+				{"type": "tag", "value": "erect nipples"},
+				{"type": "tag", "value": "swollen nipples"},
+				{"type": "tag", "value": "inverted nipples"},
+				{"type": "tag", "value": "long nipples"},
+				{"type": "tag", "value": "big nipples"},
+				{"type": "tag", "value": "huge nipples"},
+			]},
+		]},
+		"action": {"type": "ensure_append", "value": "nipples"},
+		"notes": "v4.5 draws featureless chests by default — the cue controls WHETHER "
+			"nipples render (8/8 with cue on clean identities; uncued pre-fix runs never rendered)"},
+	{"id": "ensure-genital-detail-phrase", "stage": "enhance", "severity": "safe",
+		"match": {"type": "all", "values": [
+			{"type": "any", "values": [
+				{"type": "tag", "value": "pussy"},
+				{"type": "tag", "value": "spread pussy"},
+			]},
+			{"type": "none", "values": [
+				{"type": "tag", "value": "detailed realistic folds"},
+			]},
+		]},
+		"action": {"type": "ensure_append", "value": "detailed realistic folds"},
+		"notes": "the detail phrase carries the genital render: bare `pussy` is a coin flip "
+			"(1/2), `pussy, detailed realistic folds` rendered 2/2 with full detail"},
+	{"id": "upgrade-gigantic-breasts", "stage": "enhance", "severity": "safe",
+		"match": {"type": "tag", "value": "gigantic breasts"},
+		"action": {"type": "replace", "value": "enormous breasts"},
+		"notes": "gigantic is a rare word that rendered BELOW huge (bench 1) and tied "
+			"enormous once by noise (bench 2); enormous is the measured ceiling"},
 	{"id": "solo-guard", "stage": "enhance", "severity": "safe",
 		"match": {"type": "solo_scene", "value": SOLO_TAGS},
 		"action": {"type": "negate", "value": "multiple girls, multiple boys"},

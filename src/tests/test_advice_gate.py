@@ -158,3 +158,40 @@ def test_gate_checks_persist_to_db(tmp_path):
 		" advice_gate_checks ORDER BY retry_number").fetchall()
 	conn.close()
 	assert rows == [(1, "drawn", "")]  # only the observed attempt persisted
+
+
+def test_feet_contract_and_tailed_suspension():
+	stage = STAGE_BY_ID["nude_behind"]
+	# cropped render on a normal character fails
+	assert "feet out of frame" in _gate_violations(
+		_facts(facing="back", buttocks="cleft", feet="out"), stage)
+	# tailed characters (lamia) have no feet — contract suspended
+	assert _gate_violations(
+		_facts(facing="back", buttocks="cleft", feet="out"), stage, tailed=True) == ""
+	# full-body render passes
+	assert _gate_violations(
+		_facts(facing="back", buttocks="cleft", feet="in"), stage) == ""
+	# unreported feet do not fail (fail-open on a missing line)
+	assert _gate_violations(
+		_facts(facing="back", buttocks="cleft", feet="unreported"), stage) == ""
+
+
+def test_feet_fact_parsing():
+	facts = _parse_compliance_facts(
+		"NIPPLES: absent\nGARMENTS: none\nGENITALS: out of view\n"
+		"FACING: front\nBUTTOCKS: out of view\nFEET: in frame")
+	assert facts["feet"] == "in"
+	facts = _parse_compliance_facts(
+		"NIPPLES: absent\nGARMENTS: none\nGENITALS: out of view\n"
+		"FACING: front\nBUTTOCKS: out of view\nFEET: out of frame")
+	assert facts["feet"] == "out"
+	facts = _parse_compliance_facts("NIPPLES: absent")
+	assert facts["feet"] == "unreported"
+
+
+def test_full_body_stages_carry_feet_flag():
+	assert STAGE_BY_ID["portrait"]["feet"] is True
+	assert STAGE_BY_ID["nude"]["feet"] is True
+	assert STAGE_BY_ID["nude_behind"]["feet"] is True
+	assert "feet" not in STAGE_BY_ID["topless"]  # upper-body composition
+	assert "feet" not in STAGE_BY_ID["from_behind"]  # no full-body tag

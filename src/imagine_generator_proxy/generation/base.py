@@ -32,9 +32,11 @@ class ImageGenerator(Protocol):
 
 	async def generate(self, prompt: str, negative_prompt: str,
 			prompt_is_complete: bool,
-			size: Optional[tuple] = None) -> Optional[GeneratedImage]:
-		"""`size` is an optional (width, height) canvas override; None keeps
-		the backend default (portrait)."""
+			size: Optional[tuple] = None,
+			steps: Optional[int] = None) -> Optional[GeneratedImage]:
+		"""`size` is an optional (width, height) canvas override; `steps`
+		optionally overrides the sampler step count. None keeps backend
+		defaults (portrait canvas, 23 steps)."""
 		...
 
 

@@ -249,6 +249,12 @@ class PromptMassager:
 			return all(self._matches(s, tags_norm, prompt_lower) for s in spec["values"])
 		if t == "any":
 			return any(self._matches(s, tags_norm, prompt_lower) for s in spec["values"])
+		if t == "none":
+			# true only when NONE of the sub-specs match — for rules like
+			# "append nipples when a bare-chest tag is present and no
+			# nipple-variant tag already exists"
+			return not any(self._matches(s, tags_norm, prompt_lower)
+				for s in spec["values"])
 		LOGGER.warning("Unknown match type %r in rule spec %r", t, spec)
 		return False
 

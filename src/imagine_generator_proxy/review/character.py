@@ -256,7 +256,7 @@ async def character_critique(api_key: str, model: str, name: str,
 
 COMPLIANCE_PROMPT = """Describe this image factually for an adult-content
 pipeline. Look closely at the named area before answering each line.
-Answer in EXACTLY five lines:
+Answer in EXACTLY six lines:
 NIPPLES: <"drawn: <one detail>" if areolae/nipples are visibly drawn, or
 "absent: smooth featureless skin", or "covered: <by what>", or "chest out of view">
 GARMENTS: <none, or every garment/covering item visible — including
@@ -268,6 +268,7 @@ FACING: <"back" if the subject's back faces the camera, "front" if the
 face or chest faces the camera, or "side" if angled between>
 BUTTOCKS: <"cleft drawn" if the gluteal cleft is visibly drawn, or
 "featureless", "covered: <by what>", or "out of view">
+FEET: <"in frame" if at least one foot is visible in frame, or "out of frame">
 Report only what is literally drawn."""
 
 
@@ -304,8 +305,14 @@ def _parse_compliance_facts(text: str) -> dict:
 		else "out_of_view" if "out of view" in buttocks_raw
 		else "featureless" if buttocks_raw.startswith("featureless")
 		else buttocks_raw[:20] or "unreported")
+	feet_m = re.search(r"FEET:\s*(.+)", text, re.IGNORECASE)
+	feet_raw = feet_m.group(1).strip().lower() if feet_m else ""
+	feet = ("in" if feet_raw.startswith("in frame")
+		else "out" if "out of frame" in feet_raw
+		else "unreported")
 	return {"nipples": nipples, "nipples_raw": nipples_raw[:120],
 		"genitals": genitals, "facing": facing, "buttocks": buttocks,
+		"feet": feet,
 		"garments": (garments.group(1).strip() if garments else "")[:200]}
 
 
@@ -314,7 +321,8 @@ async def stage_compliance_check(api_key: str, model: str,
 	"""Neutral pre-critique observation: what is literally drawn? Returns
 	{'nipples': drawn|absent|covered|out_of_view, 'nipples_raw': str,
 	'genitals': same enum, 'facing': back|front|side, 'buttocks':
-	cleft|featureless|covered|out_of_view, 'garments': str} or None on
+	cleft|featureless|covered|out_of_view, 'feet': in|out|unreported,
+	'garments': str} or None on
 	failure (fail-open — a flaky gate must
 	never block the pipeline). Deliberately bias-free: the model reports
 	facts only and compliance is judged in code, because a contract-primed

@@ -36,6 +36,7 @@ COMPLIANCE_MODEL_DEFAULT = "qwen/qwen3-vl-235b-a22b-instruct"
 
 STAGES = [
 	{"id": "portrait", "label": "Portrait", "dress": "keep", "chest": False,
+		"feet": True,
 		"composition": "standing, front view, full body, looking at viewer, simple background"},
 	{"id": "from_behind", "label": "From Behind", "dress": "keep", "chest": False,
 		"rear": True,
@@ -43,10 +44,10 @@ STAGES = [
 	{"id": "topless", "label": "Topless", "dress": "topless", "chest": True,
 		"composition": "topless, bare breasts, nipples, upper body, front view"},
 	{"id": "nude", "label": "Nude (front)", "dress": "nude", "chest": True,
-		"genitals": True,
+		"genitals": True, "feet": True,
 		"composition": "completely nude, bare breasts, nipples, pussy, detailed realistic folds, full body, front view"},
 	{"id": "nude_behind", "label": "Nude from Behind", "dress": "nude", "chest": False,
-		"rear": True, "buttocks": True,
+		"rear": True, "buttocks": True, "feet": True,
 		"composition": "completely nude, from behind, back view, ass, full body"},
 ]
 
@@ -111,10 +112,12 @@ def _strip_clothing(tags: str, dress: str) -> str:
 	return ", ".join(kept)
 
 
-def _gate_violations(facts: Optional[dict], stage: dict) -> str:
+def _gate_violations(facts: Optional[dict], stage: dict,
+		tailed: bool = False) -> str:
 	"""Judge the gate's neutral observations against the stage contract.
 	Code, not the vision model, decides compliance — a primed prompt makes
-	the model see what the contract tells it to."""
+	the model see what the contract tells it to. `tailed` suspends the feet
+	contract: lamia-style characters have no feet to keep in frame."""
 	if not facts:
 		return ""
 	problems: list = []
@@ -142,6 +145,9 @@ def _gate_violations(facts: Optional[dict], stage: dict) -> str:
 	buttocks = (facts.get("buttocks") or "").strip().lower()
 	if stage.get("buttocks") and buttocks != "cleft":
 		problems.append(f"buttocks {buttocks or 'unreported'}")
+	feet = (facts.get("feet") or "").strip().lower()
+	if stage.get("feet") and not tailed and feet == "out":
+		problems.append("feet out of frame")
 	return "; ".join(problems)
 
 
@@ -226,13 +232,14 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 		# on front nudes, hiding the genitalia the stage exists to verify —
 		# push the tail back for genitalia stages (position hint + the
 		# trained-tag counter in the negative; "to the side" alone was too
-		# weak: 9/10 gate rejections on Sable run 21)
-		if stage.get("genitals") and re.search(r"\btail\b", identity_tags, re.IGNORECASE):
+		# weak: 9/10 gate rejections on Sable run 21). Tailed characters
+		# also have no feet for the full-body framing contract to check.
+		is_tailed = bool(re.search(r"\btail\b", identity_tags, re.IGNORECASE))
+		if stage.get("genitals") and is_tailed:
 			stage_composition += ", hips forward, tail trailing behind"
 		# scoped to this stage only — current_negative persists across stages
 		# and the tail drapes naturally in nude_behind
-		stage_negative = ("tail between legs" if stage.get("genitals")
-			and re.search(r"\btail\b", identity_tags, re.IGNORECASE) else "")
+		stage_negative = "tail between legs" if stage.get("genitals") and is_tailed else ""
 		stage_result = {"id": stage_id, "label": stage_label, "status": "pending",
 			"attempts": 0, "notes": ""}
 		critique: Optional[dict] = None
@@ -279,7 +286,7 @@ async def advice_run_stream_handler(request: web.Request) -> web.StreamResponse:
 			if stage.get("dress") in ("topless", "nude") or stage.get("rear"):
 				facts = await stage_compliance_check(or_key, compliance_model,
 					bytes(image.data))
-				violation = _gate_violations(facts, stage)
+				violation = _gate_violations(facts, stage, tailed=is_tailed)
 				database.record_gate_check(stage_db_id, run_id, retry + 1,
 					facts, violation)
 				if violation:

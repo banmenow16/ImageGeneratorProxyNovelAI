@@ -14,6 +14,8 @@ Accepted body (OpenAI shape plus harmless extensions):
 - size: "WxH" (e.g. "832x1216") or portrait|landscape|square
 - response_format: "url" (default) or "b64_json"
 - character (extension): massager context, as on /api/generate
+- steps (extension): sampler step count, 8-50 (default 23); lower is
+  faster and rougher — thumbnail tier
 
 Response is the standard {created, data:[{url|b64_json}]} envelope.
 """
@@ -88,6 +90,12 @@ class OpenAICompatController:
 		if size == "invalid":
 			return bad_request(f"unknown size {body.get('size')!r}",
 				hint='"WxH" (e.g. 832x1216) or portrait|landscape|square')
+		steps = body.get("steps")  # extension: sampler step count (8-50)
+		if steps is not None:
+			try:
+				steps = int(steps)
+			except (TypeError, ValueError):
+				return bad_request("steps must be a number (8-50)")
 		response_format = str(body.get("response_format") or "url")
 		if response_format not in ("url", "b64_json"):
 			return bad_request("response_format must be url or b64_json")
@@ -107,7 +115,7 @@ class OpenAICompatController:
 		data: list[dict] = []
 		for _ in range(n):
 			image = await backend.generator.generate(massaged.effective,
-				negative, prompt_is_complete=True, size=size)
+				negative, prompt_is_complete=True, size=size, steps=steps)
 			if image is None:
 				return web.json_response({"error": {"message":
 					f"generation failed on engine {engine!r}",

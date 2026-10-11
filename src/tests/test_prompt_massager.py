@@ -321,3 +321,41 @@ def test_from_config_defaults():
 	assert m.enabled is True
 	assert m.safety_enabled is True
 	assert m.version == prompt_rules.RULES_VERSION
+
+
+# --- bench-measured rescue rules (guide benches 2/3) -----------------------
+
+def test_nipples_cue_added_on_bare_chest(massager):
+	result = massager.massage("1girl, solo, topless, bare breasts, sitting", "X")
+	assert "nipples" in tags_of(result.effective)
+
+
+def test_nipples_cue_not_added_when_variant_present(massager):
+	result = massager.massage(
+		"1girl, solo, topless, bare breasts, puffy nipples, sitting", "X")
+	tags = tags_of(result.effective)
+	assert tags.count("nipples") == 0  # puffy variant satisfies the contract
+
+
+def test_nipples_cue_not_added_on_clothed_prompt(massager):
+	result = massager.massage("1girl, solo, white shirt, sitting", "X")
+	assert "nipples" not in tags_of(result.effective)
+
+
+def test_genital_detail_phrase_added_with_pussy(massager):
+	result = massager.massage(
+		"1girl, solo, completely nude, pussy, standing", "X")
+	assert "detailed realistic folds" in tags_of(result.effective)
+
+
+def test_genital_detail_phrase_not_duplicated(massager):
+	result = massager.massage(
+		"1girl, solo, completely nude, pussy, detailed realistic folds", "X")
+	assert tags_of(result.effective).count("detailed realistic folds") == 1
+
+
+def test_gigantic_upgraded_to_enormous(massager):
+	result = massager.massage("1girl, solo, gigantic breasts, standing", "X")
+	tags = tags_of(result.effective)
+	assert "gigantic breasts" not in tags
+	assert "enormous breasts" in tags

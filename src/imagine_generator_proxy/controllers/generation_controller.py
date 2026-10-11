@@ -1,7 +1,7 @@
 """Direct generation: one image from a JSON request, no review chain.
 
 POST /api/generate  {prompt, negative?, character?, engine?, save?,
-size?: portrait|landscape|square}
+size?: portrait|landscape|square, steps?: 8-50}
 → {url, path?, massaged_prompt, negative_used, bytes}
 
 This is the iteration endpoint for applications debugging prompts — the
@@ -81,8 +81,14 @@ class GenerationController:
 		if str(body.get("size") or "").strip() and size is None:
 			return bad_request(f"unknown size {body.get('size')!r}",
 				hint=f"one of: {', '.join(SIZES)}")
+		steps = body.get("steps")
+		if steps is not None:
+			try:
+				steps = int(steps)
+			except (TypeError, ValueError):
+				return bad_request("steps must be a number (8-50)")
 		image = await backend.generator.generate(massaged.effective, negative,
-			prompt_is_complete=True, size=size)
+			prompt_is_complete=True, size=size, steps=steps)
 		if image is None:
 			return web.json_response(
 				{"error": "generation failed", "engine": engine}, status=502)

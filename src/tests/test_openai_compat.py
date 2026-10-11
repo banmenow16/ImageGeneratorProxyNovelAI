@@ -23,8 +23,8 @@ class _FakeGenerator:
 		self.calls: list[tuple[str, str, bool, object]] = []
 
 	async def generate(self, prompt: str, negative: str,
-			prompt_is_complete: bool, size=None):
-		self.calls.append((prompt, negative, prompt_is_complete, size))
+			prompt_is_complete: bool, size=None, steps=None):
+		self.calls.append((prompt, negative, prompt_is_complete, size, steps))
 		return GeneratedImage(name="image.png", data=PNG)
 
 
