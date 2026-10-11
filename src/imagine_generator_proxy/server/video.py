@@ -127,11 +127,15 @@ async def video_gallery_handler(request: web.Request) -> web.Response:
 	for r in rows:
 		src = f"/cache/{r['character']}/{r['source_digest']}.png" if r["source_digest"] else ""
 		prompt = html.escape(r["prompt"] or "")
+		# hoisted: the nested same-quote f-string below is PEP 701
+		# (Python 3.12+) and a SyntaxError on the Pi's 3.11
+		_reanim = (f'<a href="/video?src={r["source_digest"]}'
+			f'&amp;character={r["character"]}">↻ re-animate</a>') if src else ""
 		cards.append(
 			f'<div class="card"><video controls preload="metadata" src="/video-files/{r["character"]}/v{r["id"]}.mp4"></video>'
 			f'<div class="body"><div class="label">{html.escape(r["character"])} · {html.escape(r["engine"])} · {r["duration_seconds"]}s</div>'
 			f'<div class="prompt">{prompt}</div>'
-			f'{f"<a href=\"/video?src={r["source_digest"]}&character={r["character"]}\">↻ re-animate</a>" if src else ""}'
+			f'{_reanim}'
 			f'<div class="date">{r["created_at"]}</div></div></div>')
 	page = f"""<html><head><title>Videos</title><style>
 	body{{margin:0;padding:20px;background:#14161a;color:#e6e9ee;font-family:'Segoe UI',sans-serif}}

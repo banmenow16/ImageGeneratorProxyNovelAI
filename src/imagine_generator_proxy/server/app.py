@@ -232,6 +232,15 @@ async def on_startup(app: web.Application) -> None:
 		LOGGER.exception("Failed to create cache directory")
 	app["cache_dir"] = cache_dir
 
+	# every data subdirectory the handlers write into — fresh deployments
+	# (e.g. the Pi) otherwise die on the first write to a missing dir
+	for _subdir in ("debug", "logs", "advice", "advice/runs", "video",
+			"characters", "compat", "experiments"):
+		try:
+			(DATA_DIR / _subdir).mkdir(parents=True, exist_ok=True)
+		except Exception:
+			LOGGER.exception("Failed to create data subdirectory %s", _subdir)
+
 	database = Database(DATA_DIR / "images.db")
 	database.initialize()
 	app["db_path"] = database.path
