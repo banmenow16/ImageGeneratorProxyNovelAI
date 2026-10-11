@@ -1,25 +1,19 @@
 #!/usr/bin/env bash
 # Start the ImagineGeneratorProxy server (POSIX)
 # Usage:
-#   ./start_server.sh <token> <port>
-#   ./start_server.sh "my_token" 8080
-# If no token supplied, uses NOVELAI_ACCESS_TOKEN env var if present.
+#   ./start_server.sh [port]
+# Auth comes from imagine_generator_proxy/config.yaml (token) or the
+# NOVELAI_TOKEN / NOVELAI_EMAIL + NOVELAI_PASSWORD environment variables.
 
-TOKEN="$1"
-PORT="${2:-8080}"
-
-if [ -n "$TOKEN" ]; then
-  export NOVELAI_ACCESS_TOKEN="$TOKEN"
-fi
-
+PORT="${1:-8080}"
 export PORT="$PORT"
 
 echo "Starting server on port $PORT..."
 DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -x "$DIR/imagine_generator_proxy/bin/python" ]; then
-  "$DIR/imagine_generator_proxy/bin/python" -m imagine_generator_proxy.main
-elif [ -x "$DIR/imagine_generator_proxy/Scripts/python.exe" ]; then
-  "$DIR/imagine_generator_proxy/Scripts/python.exe" -m imagine_generator_proxy.main
+if [ -x "$DIR/.venv/bin/python" ]; then
+  "$DIR/.venv/bin/python" -m imagine_generator_proxy
+elif [ -x "$DIR/.venv/Scripts/python.exe" ]; then
+  "$DIR/.venv/Scripts/python.exe" -m imagine_generator_proxy
 else
-  python -m imagine_generator_proxy.main
+  python -m imagine_generator_proxy
 fi

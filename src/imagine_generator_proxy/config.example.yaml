@@ -1,0 +1,43 @@
+# Copy this file to config.yaml and fill in your token.
+# config.yaml is gitignored so your token is never committed.
+#
+# A token can be obtained from your NovelAI account settings, or set the
+# NOVELAI_TOKEN environment variable instead.
+token: "pst-YOUR_TOKEN_HERE"
+
+# Optional generation settings (defaults shown)
+# generation_retries: 5
+# generation_backoff: 1.0
+# generation_min_interval: 1.0   # minimum seconds between NovelAI generation
+                                 # starts (proactive pacing; 429s are also
+                                 # retried with exponential backoff)
+
+# Prompt massager (rewrites prompts to reduce bad generations)
+# prompt_massage: true     # false = legacy prompt assembly + legacy cache keys
+# safety_filter: true      # minor-coded content filter; runs even when prompt_massage is false
+# negative_prompt: "text, watermark, ..."  # optional: replaces the built-in negative blocks (string or list)
+# rules_file: rules.yaml   # optional overlay next to config.yaml; replaces the built-in rules
+                           # wholesale and must define its own top-level version
+
+# Generation backends. Each Civitai model provides its own rule overrides
+# (quality-tag vocabulary, quirks) automatically; safety/leak/taste rules
+# stay shared across all backends. Civitai uses the Orchestration API
+# (orchestration.civitai.com); an image at 832x1216/28 steps costs ~3 Buzz.
+# generation_backend: novelai      # what /generate uses: novelai|illustrious|pony|noobai
+# civitaiToken: "<api key>"        # enables the Civitai backends (costs Buzz per image)
+# civitai_model_illustrious: urn:air:sdxl:checkpoint:civitai:795765@889818   # optional URN overrides
+# civitai_model_pony: urn:air:sdxl:checkpoint:civitai:257749@290640
+# civitai_model_noobai: urn:air:sdxl:checkpoint:civitai:833294@1116447
+# Per-model LoRAs (AIR URN -> strength); replaces that model's defaults:
+# civitai_loras_illustrious:
+#   "urn:air:sdxl:lora:civitai:481016@1835318": 0.7
+
+# Vision review of generated images via OpenRouter (Phase 2).
+# WARNING: enabling this sends every generated image to OpenRouter (third
+# party) and costs a small per-generation API fee.
+# openRouterToken: "sk-or-v1-..."  # required when vision_review is true
+# vision_review: true              # default false (no review, no upload, no cost)
+# reviewer_model: qwen/qwen3-vl-235b-a22b-instruct # cheap first pass
+#   (32b deprecated on OpenRouter 2026-10-09; 235b is the drop-in)
+# reviewer_escalation_model: x-ai/grok-4.7         # second opinion on age flags
+# vision_review_retries: 1         # quality-rejection regenerations (new seed)

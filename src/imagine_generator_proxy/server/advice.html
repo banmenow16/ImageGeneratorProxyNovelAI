@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Mirror — Character Advice</title>
+<style>
+:root{--bg:#14161a;--card:#22262e;--border:#333842;--text:#e6e9ee;--muted:#9aa3af;--accent:#6ea8fe;--good:#4cc38a;--bad:#e5524b;--warn:#e7a33e;--feel:#b48ef0}
+*{box-sizing:border-box} body{margin:0;padding:20px;background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif}
+h1{margin:0 0 4px;font-size:22px} .sub{color:var(--muted);font-size:13px;margin-bottom:18px} a{color:var(--accent)}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+form{display:grid;grid-template-columns:170px 1fr;gap:10px 12px;align-items:center}
+label{color:var(--muted);font-size:13px}
+input,select,textarea{background:#1d2026;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:13px;width:100%}
+textarea{min-height:90px;resize:vertical}
+button{background:var(--accent);color:#10131a;font-weight:600;border:0;border-radius:7px;padding:10px 22px;font-size:14px;cursor:pointer;justify-self:start}
+button:disabled{opacity:.5;cursor:wait;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:.9}}
+#status{margin-top:10px;font-size:13px;color:var(--muted);min-height:18px} #status.err{color:var(--bad)}
+.stage{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px}
+.stage.converged{border-color:var(--good)} .stage.unresolved{border-color:var(--warn)}
+.shead{display:flex;gap:10px;align-items:baseline;margin-bottom:8px}
+.sbadge{padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.sbadge.converged{background:rgba(76,195,138,.16);color:var(--good)}
+.sbadge.unresolved{background:rgba(231,163,62,.16);color:var(--warn)}
+.sbadge.skipped{background:rgba(154,163,175,.15);color:var(--muted)}
+.stage img{max-width:380px;width:100%;border-radius:8px;display:block;margin:6px 0}
+.crit{font-size:13px;line-height:1.5;margin-top:6px}
+.crit b{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.feel{color:var(--feel);font-style:italic}
+.mono{font-family:Consolas,monospace;font-size:11.5px;word-break:break-word;color:var(--muted)}
+#final{display:none}
+#finalblock{font-family:Consolas,monospace;font-size:12px;background:#1d2026;border:1px solid var(--border);border-radius:8px;padding:12px;white-space:pre-wrap;word-break:break-word}
+.adviceblock{font-size:13px;line-height:1.6;white-space:pre-wrap}
+.summary{display:grid;gap:6px;margin-top:10px}
+.summary .row{display:grid;grid-template-columns:24px 1fr auto;gap:8px;align-items:center;font-size:13px}
+</style></head><body>
+<h1>🪞 Mirror — let her see herself</h1>
+<div class="sub">five views, each refined until she recognizes herself · <a href="/experiment">experiment</a> · <a href="/video">video</a></div>
+<div class="panel">
+	<form id="form">
+		<label>Character</label><input id="character" type="text" placeholder="Shiori">
+		<label>How she describes herself</label><textarea id="description" placeholder="First-person appearance description from your RP bot (see data/character_description_prompt.md)"></textarea>
+		<label>Identity tags <span style="opacity:.5">(blank = auto-derive)</span></label><textarea id="prompt" style="min-height:50px" placeholder="leave blank — she writes her own identity tags from her description"></textarea>
+		<label>Engine</label>
+		<select id="engine"><option value="" disabled>loading…</option></select>
+		<label></label><button id="go">Start the mirror</button>
+	</form>
+	<div id="status"></div>
+</div>
+<div id="stages"></div>
+<div class="panel" id="final">
+	<h2 style="margin:0 0 8px;font-size:16px">Her drawing instructions</h2>
+	<div id="finalblock"></div>
+	<h2 style="margin:14px 0 8px;font-size:16px">Her advice to the artist</h2>
+	<div id="adviceblock" class="adviceblock"></div>
+	<div class="sub" style="margin-top:8px">copy-paste into your RP bot's system prompt or character card</div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const setStatus = (t, err) => { const s = $("status"); s.textContent = t; s.className = err ? "err" : ""; };
+const loadDesc = () => {
+	const name = $("character").value.trim();
+	if (!name) return;
+	fetch(`/api/characters/${encodeURIComponent(name)}/description`)
+		.then(r => r.json())
+		.then(d => { if (d.description && !$("description").value.trim()) $("description").value = d.description; })
+		.catch(() => {});
+};
+$("character").addEventListener("change", loadDesc);
+$("character").addEventListener("blur", loadDesc);
+loadDesc();
+fetch("/api/image-engines").then(r => r.json()).then(d => {
+	const sel = $("engine"); sel.innerHTML = "";
+	for (const e of d.engines) {
+		const o = document.createElement("option");
+		o.value = e.id; o.textContent = e.display;
+		if (e.id === d.default) o.selected = true;
+		sel.appendChild(o);
+	}
+}).catch(() => {});
+$("form").addEventListener("submit", async ev => {
+	ev.preventDefault();
+	$("go").disabled = true; $("stages").innerHTML = ""; $("final").style.display = "none";
+	const t0 = Date.now();
+	let phase = "starting";
+	const timer = setInterval(() => { if ($("go").disabled) setStatus(`${phase}… ${((Date.now()-t0)/1000).toFixed(0)}s`); }, 1000);
+	const stageDivs = {};
+	const ensureStage = (id, label) => {
+		if (stageDivs[id]) return stageDivs[id];
+		const div = document.createElement("div");
+		div.className = "stage"; div.id = `stage-${id}`;
+		div.innerHTML = `<div class="shead"><b style="color:var(--accent);font-size:14px">${label}</b><span class="sbadge" style="background:rgba(154,163,175,.15);color:var(--muted)">running…</span></div><div class="content"></div>`;
+		$("stages").appendChild(div);
+		stageDivs[id] = div;
+		return div;
+	};
+	try {
+		const res = await fetch("/advice/run/stream", {method: "POST",
+			headers: {"Content-Type": "application/json"},
+			body: JSON.stringify({character: $("character").value, description: $("description").value,
+				prompt: $("prompt").value, engine: $("engine").value})});
+		if (!res.ok || !res.body) {
+			const err = await res.json().catch(() => ({}));
+			setStatus(`error ${res.status}: ${err.error || "request failed"}`, true);
+			return;
+		}
+		const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+		while (true) {
+			const {done, value} = await reader.read(); if (done) break;
+			buf += dec.decode(value, {stream: true}); let nl;
+			while ((nl = buf.indexOf("\n")) >= 0) {
+				const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+				if (!line) continue;
+				const e = JSON.parse(line);
+				if (e.event === "stage" && e.phase === "start") {
+					phase = e.label;
+					ensureStage(e.stage, e.label);
+				}
+				else if (e.event === "stage" && e.phase === "done") {
+					const div = stageDivs[e.stage];
+					if (div) {
+						const badge = div.querySelector(".sbadge");
+						badge.textContent = e.status;
+						badge.className = `sbadge ${e.status}`;
+						if (e.status === "converged") div.classList.add("converged");
+						if (e.status === "unresolved") div.classList.add("unresolved");
+					}
+				}
+				else if (e.event === "step") { phase = `${e.phase}${e.stage ? " (" + e.stage + ")" : ""}`; }
+				else if (e.event === "prompt") { $("prompt").value = e.prompt; }
+				else if (e.event === "image") {
+					const div = ensureStage(e.stage, e.stage);
+					div.querySelector(".content").innerHTML += `<img src="${e.url}" loading="lazy"><div class="mono">${e.prompt}</div>`;
+				}
+				else if (e.event === "critique") {
+					const div = ensureStage(e.stage, e.stage);
+					div.querySelector(".content").innerHTML += `<div class="crit"><span class="sbadge ${e.verdict === "yes" ? "converged" : e.verdict === "almost" ? "unresolved" : "skipped"}">${e.verdict}</span>
+						<div style="margin-top:4px"><b>right:</b> ${e.right || "—"}</div>
+						<div><b>wrong:</b> ${e.wrong || "—"}</div>
+						<div class="feel" style="margin-top:4px">"${e.feel || ""}"</div></div>`;
+				}
+				else if (e.event === "error") setStatus(e.error, true);
+				else if (e.event === "done") {
+					clearInterval(timer);
+					const conv = e.converged_count || 0, total = e.total_stages || 5;
+					setStatus(`done in ${((Date.now()-t0)/1000).toFixed(0)}s — ${conv}/${total} stages converged`);
+					$("final").style.display = "";
+					$("finalblock").textContent = e.final_prompt || "";
+					$("adviceblock").textContent = e.advice || "(no advice)";
+					if (e.stage_results) {
+						const summary = document.createElement("div");
+						summary.className = "summary";
+						for (const s of e.stage_results) {
+							const icon = s.status === "converged" ? "✓" : s.status === "unresolved" ? "⚠" : "✗";
+							summary.innerHTML += `<div class="row"><span>${icon}</span><span>${s.label}</span><span style="color:var(--muted)">${s.attempts} tries</span></div>`;
+						}
+						$("final").querySelector(".adviceblock").after(summary);
+					}
+				}
+			}
+		}
+	} catch (e) {
+		setStatus("stream error: " + e.message, true);
+		if (document.querySelectorAll(".stage").length > 0) {
+			fetch(`/api/characters/${encodeURIComponent($("character").value.trim())}/sheet`)
+				.then(r => r.json())
+				.then(d => {
+					if (d.canonical_tags || d.advice) {
+						$("final").style.display = "";
+						$("finalblock").textContent = d.canonical_tags || "";
+						$("adviceblock").textContent = d.advice || "";
+					}
+				}).catch(() => {});
+		}
+	}
+	finally { clearInterval(timer); $("go").disabled = false; }
+});
+</script></body></html>

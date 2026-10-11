@@ -2,31 +2,35 @@
 Start the ImagineGeneratorProxy server (PowerShell)
 
 Usage:
-  .\start_server.ps1 -Token '<token>' -Port 8080
-  # or rely on env vars:
-  $env:NOVELAI_ACCESS_TOKEN='token'; .\start_server.ps1
+  .\start_server.ps1              # port from $env:PORT or 8080
+  .\start_server.ps1 -Port 8088   # explicit port
+
+Auth comes from data\config.yaml (token) or the NOVELAI_TOKEN /
+NOVELAI_EMAIL + NOVELAI_PASSWORD environment variables.
+
+If Windows blocks the script ("running scripts is disabled"), run:
+  powershell -ExecutionPolicy Bypass -File .\start_server.ps1
 #>
 
 param(
-    [string]$Token = $env:NOVELAI_ACCESS_TOKEN,
-    [string]$Email = $env:NOVELAI_EMAIL,
-    [string]$Password = $env:NOVELAI_PASSWORD,
-    [int]$Port = 8080
+    [int]$Port = 0
 )
 
-if ($Token) {
-    $env:NOVELAI_ACCESS_TOKEN = $Token
-} elseif ($Email -and $Password) {
-    $env:NOVELAI_EMAIL = $Email
-    $env:NOVELAI_PASSWORD = $Password
+if ($Port -gt 0) {
+    $env:PORT = $Port.ToString()
 }
 
-$env:PORT = $Port.ToString()
+$displayPort = $(if ($env:PORT) { $env:PORT } else { '8080' })
+Write-Host "Starting server on port $displayPort..."
 
-Write-Host "Starting server on port $env:PORT..."
-$venv_python = Join-Path $PSScriptRoot 'imagine_generator_proxy\Scripts\python.exe'
-if (Test-Path $venv_python) {
-    & $venv_python -m imagine_generator_proxy.main
+$venvPython = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path $venvPython)) {
+    Write-Warning "No .venv found at $venvPython - falling back to system python."
+}
+
+Set-Location $PSScriptRoot
+if (Test-Path $venvPython) {
+    & $venvPython -m imagine_generator_proxy
 } else {
-    python -m imagine_generator_proxy.main
+    & python -m imagine_generator_proxy
 }
